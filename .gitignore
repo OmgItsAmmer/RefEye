@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Models & assets (large binaries — tracked via manifest, not git)
+models/**/*.pt
+models/**/*.onnx
+models/**/*.engine
+
+# Logs & local data
+logs/*.log
+logs/*.jsonl
+storage/cache/*
+!storage/cache/.gitkeep
+
+# Local config overrides
+config/local.yaml
+.env
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Test fixtures (large video files kept out of git; use LFS or shared drive)
+tests/fixtures/*.mp4
+tests/fixtures/*.mkv

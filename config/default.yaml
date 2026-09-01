@@ -1,0 +1,81 @@
+application:
+  name: "Soccer Analysis MVP"
+  environment: "development"   # development | demo | production
+
+video:
+  input_type: "local_file"     # local_file | capture_card | rtsp | srt | screen | ndi
+  local_file:
+    path: "./tests/fixtures/sample_match.mp4"
+    loop: true
+  analysis_resolution:
+    width: 960
+    height: 540
+  preview_max_fps: 60
+
+buffer:
+  recent_window_seconds: 20
+  encoded_buffer_seconds: 30
+  decoded_buffer_seconds: 20
+  max_decoded_frames: 600
+  max_encoded_packets: 3000
+
+shortcuts:
+  analyze: "F8"
+  previous_frame: "Left"
+  next_frame: "Right"
+  previous_candidate: "Up"
+  next_candidate: "Down"
+  jump_to_best: "Home"
+  confirm_frame: "Return"
+
+ai:
+  action_spotter:
+    provider: "tdeed"
+
+  providers:
+    tdeed:
+      checkpoint: "./models/tdeed/model.pt"
+    footpass:
+      checkpoint: "./models/footpass/model.pt"
+    soccernet:
+      checkpoint: "./models/soccernet/model.pt"
+
+  detector:
+    provider: "yolo"
+    checkpoint: "./models/detector/yolo_ball_player.onnx"
+    confidence_threshold: 0.35
+
+  tracker:
+    provider: "bytetrack"
+
+  contact_refinement:
+    enabled: true
+    window_before_frames: 12
+    window_after_frames: 12
+    weights:
+      model: 0.4
+      proximity: 0.2
+      velocity: 0.15
+      direction: 0.15
+      motion: 0.05
+      track_consistency: 0.05
+
+  candidate_ranking:
+    max_candidates_returned: 5
+    dedup_temporal_distance_frames: 8
+
+runtime:
+  device: "cuda"          # cuda | cpu
+  inference_scheduler:
+    max_queue_size: 16
+
+logging:
+  level: "INFO"
+  directory: "./logs"
+  json_file: true
+  console: true
+  rotation_max_bytes: 10485760   # 10 MB per file
+  rotation_backup_count: 5
+
+persistence:
+  sqlite_path: "./storage/settings/app.db"
