@@ -97,7 +97,10 @@ class TimestampNormalizer:
                 is_discontinuity=False,
             )
 
-        delta_ms = pts_ms - (self._last_pts_ms or pts_ms)
+        # Explicit None check: a previous PTS of exactly 0.0 is legitimate and
+        # must not be treated as "no previous value".
+        previous_pts_ms = pts_ms if self._last_pts_ms is None else self._last_pts_ms
+        delta_ms = pts_ms - previous_pts_ms
         is_discontinuity = abs(delta_ms) > self._discontinuity_threshold_ms
 
         if is_discontinuity:

@@ -1,0 +1,230 @@
+2026-09-03T17:24:04.181648Z [info     ] application_started            [__main__] app_name=RefEye device=cuda environment=demo input_type=local_file session_id=24b0de08a6b5
+2026-09-03T17:24:05.807677Z [info     ] hardware_detected              [__main__] cpu_count=24 cuda_available=True cuda_device='NVIDIA GeForce RTX 4070 Laptop GPU' cuda_memory_gb=8.0 disk_free_gb=22.1 platform='Windows 11' python_version=3.12.10 ram_total_gb=31.8 session_id=24b0de08a6b5 torch_version=2.5.1+cu121
+2026-09-03T17:24:06.098306Z [info     ] model_loading                  [ai.model_registry.registry] device=cuda
+2026-09-03T17:24:06.108542Z [info     ] stream_connected               [video.inputs.local_file] codec=h264 path=C:\Programming\Projects\07_freelancing\football_event_tracker\data\videos\demo_video_offside_2.mp4 source=local_file
+2026-09-03T17:24:06.108542Z [info     ] video_source_opened            [video.frame_access.video_service] analysis_resolution=960x540 buffer_limit_frames=345 buffer_limit_reason=max_decoded_megabytes buffer_projected_mb=511.7 buffer_projected_seconds=11.5 codec=h264 fps=29.97002997002997 source=local_file source_resolution=1280x720
+2026-09-03T17:24:06.117321Z [info     ] stream_connected               [video.inputs.local_file] codec=h264 path=C:\Programming\Projects\07_freelancing\football_event_tracker\data\videos\demo_video_offside_1.mp4 source=local_file
+2026-09-03T17:24:06.118324Z [info     ] video_source_opened            [video.frame_access.video_service] analysis_resolution=960x540 buffer_limit_frames=345 buffer_limit_reason=max_decoded_megabytes buffer_projected_mb=511.7 buffer_projected_seconds=11.5 codec=h264 fps=29.97002997002997 source=local_file source_resolution=1920x1080
+2026-09-03T17:24:06.119322Z [info     ] stream_connected               [video.inputs.local_file] codec=h264 path=C:\Programming\Projects\07_freelancing\football_event_tracker\data\videos\demo_video_offside_3.mp4 source=local_file
+2026-09-03T17:24:06.119322Z [info     ] video_source_opened            [video.frame_access.video_service] analysis_resolution=960x540 buffer_limit_frames=345 buffer_limit_reason=max_decoded_megabytes buffer_projected_mb=511.7 buffer_projected_seconds=11.5 codec=h264 fps=30.0 source=local_file source_resolution=1280x720
+2026-09-03T17:24:06.126774Z [info     ] stream_connected               [video.inputs.local_file] codec=h264 path=C:\Programming\Projects\07_freelancing\football_event_tracker\data\videos\demo_video_offside_4.mp4 source=local_file
+2026-09-03T17:24:06.127775Z [info     ] video_source_opened            [video.frame_access.video_service] analysis_resolution=960x540 buffer_limit_frames=345 buffer_limit_reason=max_decoded_megabytes buffer_projected_mb=511.7 buffer_projected_seconds=6.9 codec=h264 fps=50.0 source=local_file source_resolution=1920x1080
+2026-09-03T17:24:06.605990Z [info     ] model_ready                    [vision.detection.yolo_detector] component=detector device=cuda model=yolo:yolo11n version=8.4.138
+2026-09-03T17:24:11.261599Z [info     ] model_warmed_up                [vision.detection.yolo_detector] component=detector duration_ms=4654 model=yolo:yolo11n
+2026-09-03T17:24:14.768193Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=258 segment=1
+=> Processing stage with 4 blocks residual
+=> Using GSM/GSF, fold dim: 16 / 56
+=> Using GSM/GSF, fold dim: 40 / 152
+=> Using GSM/GSF, fold dim: 40 / 152
+=> Using GSM/GSF, fold dim: 40 / 152
+=> Processing stage with 7 blocks residual
+=> Using GSM/GSF, fold dim: 40 / 152
+=> Using GSM/GSF, fold dim: 92 / 368
+=> Using GSM/GSF, fold dim: 92 / 368
+=> Using GSM/GSF, fold dim: 92 / 368
+=> Using GSM/GSF, fold dim: 92 / 368
+=> Using GSM/GSF, fold dim: 92 / 368
+=> Using GSM/GSF, fold dim: 92 / 368
+Model params: 12310330
+  CNN features: 2815548
+  Temporal: 9452816
+  Head: 4797
+2026-09-03T17:24:16.597301Z [info     ] model_ready                    [ai.action_spotting.tdeed.adapter] checkpoint=C:\Programming\Projects\07_freelancing\football_event_tracker\models\tdeed\checkpoint_best.pt component=action_spotter device=cuda model=tdeed version=SoccerNetBall_challenge1
+C:\Programming\Projects\07_freelancing\football_event_tracker\ai\action_spotting\tdeed\_vendor\model\model.py:353: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast() if use_amp else nullcontext():
+2026-09-03T17:24:17.569152Z [info     ] model_warmed_up                [ai.action_spotting.tdeed.adapter] component=action_spotter duration_ms=955 model=tdeed
+2026-09-03T17:24:17.661429Z [info     ] model_ready                    [ai.model_registry.registry] message='AI ready' models={'detector': {'name': 'yolo:yolo11n', 'version': '8.4.138', 'provider': 'yolo', 'checkpoint': './models/detector/yolo11n.pt', 'sha256': '0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1'}, 'tracker': {'name': 'bytetrack-iou', 'version': '1.0', 'provider': 'bytetrack', 'checkpoint': None, 'sha256': None}, 'action_spotter': {'name': 'tdeed', 'version': 'SoccerNetBall_challenge1', 'provider': 'tdeed', 'checkpoint': './models/tdeed/checkpoint_best.pt', 'sha256': 'f7b5cee134a2cfffc5b76922bbf528fe24cb6cc35c550dba23b9eb1bd4ff3d35'}} status=ready
+2026-09-03T17:24:20.279487Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=424 segment=1
+2026-09-03T17:24:23.374998Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=516 segment=2
+2026-09-03T17:24:24.117978Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=539 segment=1
+2026-09-03T17:24:26.337009Z [info     ] analysis_requested             [analysis.request_manager.manager] request_id=4b43574f5aff session_id=24b0de08a6b5 trigger_source=button triggered_at_ms=20133 window_ms=20000
+2026-09-03T17:24:26.340010Z [info     ] analysis_started               [analysis.request_manager.manager] request_id=4b43574f5aff trigger_source=button
+2026-09-03T17:24:30.408444Z [info     ] action_spotting_completed      [analysis.pipelines.analysis_pipeline] candidates=11 duration_ms=1883 model=tdeed model_version=SoccerNetBall_challenge1 request_id=4b43574f5aff
+2026-09-03T17:24:30.428497Z [info     ] refinement_completed           [analysis.pipelines.analysis_pipeline] adjusted=6 candidates=11 duration_ms=19 request_id=4b43574f5aff
+2026-09-03T17:24:30.684295Z [info     ] analysis_completed             [analysis.request_manager.manager] candidate_count=5 duration_ms=4343 request_id=4b43574f5aff
+2026-09-03T17:24:31.985981Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=774 segment=3
+2026-09-03T17:24:34.427980Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=848 segment=2
+2026-09-03T17:24:40.605900Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1032 segment=4
+2026-09-03T17:24:42.105712Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1078 segment=2
+2026-09-03T17:24:48.557585Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1272 segment=3
+2026-09-03T17:24:49.208643Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1290 segment=5
+2026-09-03T17:24:57.817171Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1548 segment=6
+2026-09-03T17:25:00.097248Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1617 segment=3
+2026-09-03T17:25:02.703957Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1696 segment=4
+2026-09-03T17:25:06.441845Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=1806 segment=7
+2026-09-03T17:25:15.059136Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2064 segment=8
+2026-09-03T17:25:16.840046Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2120 segment=5
+2026-09-03T17:25:18.163902Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2156 segment=4
+2026-09-03T17:25:23.654592Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2322 segment=9
+2026-09-03T17:25:25.577001Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3849 segment=1
+2026-09-03T17:25:32.298962Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2580 segment=10
+2026-09-03T17:25:33.038510Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2544 segment=6
+2026-09-03T17:25:38.510612Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2695 segment=5
+2026-09-03T17:25:40.910028Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2838 segment=11
+2026-09-03T17:25:48.342874Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=2968 segment=7
+2026-09-03T17:25:49.495065Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3096 segment=12
+2026-09-03T17:25:57.948765Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3234 segment=6
+2026-09-03T17:25:58.093104Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3354 segment=13
+2026-09-03T17:26:03.365470Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3392 segment=8
+2026-09-03T17:26:06.705451Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3612 segment=14
+2026-09-03T17:26:15.404214Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3870 segment=15
+2026-09-03T17:26:16.998198Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3773 segment=7
+2026-09-03T17:26:19.010367Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=3816 segment=9
+2026-09-03T17:26:23.923908Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4128 segment=16
+2026-09-03T17:26:32.501837Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4386 segment=17
+2026-09-03T17:26:32.522752Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4240 segment=10
+2026-09-03T17:26:35.046756Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4312 segment=8
+2026-09-03T17:26:41.124840Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4644 segment=18
+2026-09-03T17:26:46.668743Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4664 segment=11
+2026-09-03T17:26:49.751699Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4902 segment=19
+2026-09-03T17:26:53.031887Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=4851 segment=9
+2026-09-03T17:26:56.255396Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7698 segment=2
+2026-09-03T17:26:58.337934Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5160 segment=20
+2026-09-03T17:27:00.790244Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5088 segment=12
+2026-09-03T17:27:06.936313Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5418 segment=21
+2026-09-03T17:27:09.269298Z [info     ] analysis_requested             [analysis.request_manager.manager] request_id=16750b08611b session_id=24b0de08a6b5 trigger_source=live_grid triggered_at_ms=177666 window_ms=20000
+2026-09-03T17:27:09.272435Z [info     ] analysis_started               [analysis.request_manager.manager] request_id=16750b08611b trigger_source=live_grid
+2026-09-03T17:27:11.016238Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5390 segment=10
+2026-09-03T17:27:12.942530Z [info     ] action_spotting_completed      [analysis.pipelines.analysis_pipeline] candidates=12 duration_ms=1607 model=tdeed model_version=SoccerNetBall_challenge1 request_id=16750b08611b
+2026-09-03T17:27:12.995563Z [info     ] refinement_completed           [analysis.pipelines.analysis_pipeline] adjusted=7 candidates=12 duration_ms=50 request_id=16750b08611b
+2026-09-03T17:27:13.245533Z [info     ] analysis_completed             [analysis.request_manager.manager] candidate_count=5 duration_ms=3969 request_id=16750b08611b
+2026-09-03T17:27:14.912337Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5512 segment=13
+2026-09-03T17:27:15.555141Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5676 segment=22
+2026-09-03T17:27:24.140307Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5934 segment=23
+2026-09-03T17:27:28.985844Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5929 segment=11
+2026-09-03T17:27:29.048585Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=5936 segment=14
+2026-09-03T17:27:32.749467Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=6192 segment=24
+2026-09-03T17:27:41.382404Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=6450 segment=25
+2026-09-03T17:27:43.182847Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=6360 segment=15
+2026-09-03T17:27:46.984800Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=6468 segment=12
+2026-09-03T17:27:50.000339Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=6708 segment=26
+2026-09-03T17:27:57.326586Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=6784 segment=16
+2026-09-03T17:27:58.580543Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=6966 segment=27
+2026-09-03T17:28:04.956627Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7007 segment=13
+2026-09-03T17:28:07.213286Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7224 segment=28
+2026-09-03T17:28:11.436786Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7208 segment=17
+2026-09-03T17:28:13.257200Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11547 segment=3
+2026-09-03T17:28:15.800779Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7482 segment=29
+2026-09-03T17:28:22.951599Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7546 segment=14
+2026-09-03T17:28:24.428312Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7740 segment=30
+2026-09-03T17:28:24.848655Z [info     ] analysis_requested             [analysis.request_manager.manager] request_id=379f50c84b6a session_id=24b0de08a6b5 trigger_source=live_grid triggered_at_ms=257657 window_ms=20000
+2026-09-03T17:28:24.851544Z [info     ] analysis_started               [analysis.request_manager.manager] request_id=379f50c84b6a trigger_source=live_grid
+2026-09-03T17:28:25.589707Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7632 segment=18
+2026-09-03T17:28:28.846350Z [info     ] action_spotting_completed      [analysis.pipelines.analysis_pipeline] candidates=10 duration_ms=1500 model=tdeed model_version=SoccerNetBall_challenge1 request_id=379f50c84b6a
+2026-09-03T17:28:28.863880Z [info     ] refinement_completed           [analysis.pipelines.analysis_pipeline] adjusted=10 candidates=10 duration_ms=15 request_id=379f50c84b6a
+2026-09-03T17:28:29.091860Z [info     ] analysis_completed             [analysis.request_manager.manager] candidate_count=5 duration_ms=4235 request_id=379f50c84b6a
+2026-09-03T17:28:33.017076Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=7998 segment=31
+2026-09-03T17:28:39.716854Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8056 segment=19
+2026-09-03T17:28:40.935806Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8085 segment=15
+2026-09-03T17:28:41.628767Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8256 segment=32
+2026-09-03T17:28:50.241524Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8514 segment=33
+2026-09-03T17:28:53.313490Z [info     ] analysis_requested             [analysis.request_manager.manager] request_id=d25ef2d9c051 session_id=24b0de08a6b5 trigger_source=live_grid triggered_at_ms=286019 window_ms=20000
+2026-09-03T17:28:53.318364Z [info     ] analysis_started               [analysis.request_manager.manager] request_id=d25ef2d9c051 trigger_source=live_grid
+2026-09-03T17:28:53.585334Z [info     ] analysis_requested             [analysis.request_manager.manager] request_id=b669e47ec09f session_id=24b0de08a6b5 trigger_source=live_grid triggered_at_ms=286152 window_ms=20000
+2026-09-03T17:28:53.844618Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8480 segment=20
+2026-09-03T17:28:56.928145Z [info     ] action_spotting_completed      [analysis.pipelines.analysis_pipeline] candidates=12 duration_ms=1555 model=tdeed model_version=SoccerNetBall_challenge1 request_id=d25ef2d9c051
+2026-09-03T17:28:56.981964Z [info     ] refinement_completed           [analysis.pipelines.analysis_pipeline] adjusted=10 candidates=12 duration_ms=48 request_id=d25ef2d9c051
+2026-09-03T17:28:57.386580Z [info     ] analysis_completed             [analysis.request_manager.manager] candidate_count=5 duration_ms=4062 request_id=d25ef2d9c051
+2026-09-03T17:28:57.387597Z [info     ] analysis_started               [analysis.request_manager.manager] request_id=b669e47ec09f trigger_source=live_grid
+2026-09-03T17:28:58.685838Z [info     ] action_spotting_completed      [analysis.pipelines.analysis_pipeline] candidates=6 duration_ms=1150 model=tdeed model_version=SoccerNetBall_challenge1 request_id=b669e47ec09f
+2026-09-03T17:28:58.703582Z [info     ] refinement_completed           [analysis.pipelines.analysis_pipeline] adjusted=4 candidates=6 duration_ms=17 request_id=b669e47ec09f
+2026-09-03T17:28:58.863204Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8772 segment=34
+2026-09-03T17:28:58.941890Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8624 segment=16
+2026-09-03T17:28:59.070863Z [info     ] analysis_completed             [analysis.request_manager.manager] candidate_count=5 duration_ms=1688 request_id=b669e47ec09f
+2026-09-03T17:29:07.454450Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9030 segment=35
+2026-09-03T17:29:07.973975Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=8904 segment=21
+2026-09-03T17:29:16.070380Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9288 segment=36
+2026-09-03T17:29:16.903967Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9163 segment=17
+2026-09-03T17:29:22.102892Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9328 segment=22
+2026-09-03T17:29:24.693450Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9546 segment=37
+2026-09-03T17:29:30.243991Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15396 segment=4
+2026-09-03T17:29:33.309311Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9804 segment=38
+2026-09-03T17:29:34.887547Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9702 segment=18
+2026-09-03T17:29:36.266173Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=9752 segment=23
+2026-09-03T17:29:41.901906Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10062 segment=39
+2026-09-03T17:29:45.688385Z [info     ] analysis_requested             [analysis.request_manager.manager] request_id=5b885dabde89 session_id=24b0de08a6b5 trigger_source=retry triggered_at_ms=338237 window_ms=20000
+2026-09-03T17:29:45.689420Z [info     ] analysis_started               [analysis.request_manager.manager] request_id=5b885dabde89 trigger_source=retry
+2026-09-03T17:29:49.634022Z [info     ] action_spotting_completed      [analysis.pipelines.analysis_pipeline] candidates=12 duration_ms=1766 model=tdeed model_version=SoccerNetBall_challenge1 request_id=5b885dabde89
+2026-09-03T17:29:49.665135Z [info     ] refinement_completed           [analysis.pipelines.analysis_pipeline] adjusted=10 candidates=12 duration_ms=29 request_id=5b885dabde89
+2026-09-03T17:29:49.951763Z [info     ] analysis_completed             [analysis.request_manager.manager] candidate_count=5 duration_ms=4250 request_id=5b885dabde89
+2026-09-03T17:29:50.383442Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10176 segment=24
+2026-09-03T17:29:50.501217Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10320 segment=40
+2026-09-03T17:29:52.870722Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10241 segment=19
+2026-09-03T17:29:59.100070Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10578 segment=41
+2026-09-03T17:30:04.523241Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10600 segment=25
+2026-09-03T17:30:07.710513Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10836 segment=42
+2026-09-03T17:30:09.658780Z [info     ] analysis_requested             [analysis.request_manager.manager] request_id=742efaf05f46 session_id=24b0de08a6b5 trigger_source=live_grid triggered_at_ms=362095 window_ms=20000
+2026-09-03T17:30:09.660301Z [info     ] analysis_started               [analysis.request_manager.manager] request_id=742efaf05f46 trigger_source=live_grid
+2026-09-03T17:30:10.848495Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=10780 segment=20
+2026-09-03T17:30:13.147317Z [info     ] action_spotting_completed      [analysis.pipelines.analysis_pipeline] candidates=10 duration_ms=1653 model=tdeed model_version=SoccerNetBall_challenge1 request_id=742efaf05f46
+2026-09-03T17:30:13.176256Z [info     ] refinement_completed           [analysis.pipelines.analysis_pipeline] adjusted=9 candidates=10 duration_ms=28 request_id=742efaf05f46
+2026-09-03T17:30:13.481885Z [info     ] analysis_completed             [analysis.request_manager.manager] candidate_count=5 duration_ms=3812 request_id=742efaf05f46
+2026-09-03T17:30:16.327793Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11094 segment=43
+2026-09-03T17:30:18.642919Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11024 segment=26
+2026-09-03T17:30:24.950324Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11352 segment=44
+2026-09-03T17:30:28.843033Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11319 segment=21
+2026-09-03T17:30:32.786329Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11448 segment=27
+2026-09-03T17:30:33.553482Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11610 segment=45
+2026-09-03T17:30:42.201762Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11868 segment=46
+2026-09-03T17:30:46.817669Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11858 segment=22
+2026-09-03T17:30:46.904878Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=11872 segment=28
+2026-09-03T17:30:47.260433Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=19245 segment=5
+2026-09-03T17:30:50.790790Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12126 segment=47
+2026-09-03T17:30:59.371852Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12384 segment=48
+2026-09-03T17:31:01.097995Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12296 segment=29
+2026-09-03T17:31:04.828463Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12397 segment=23
+2026-09-03T17:31:08.021411Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12642 segment=49
+2026-09-03T17:31:15.203765Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12720 segment=30
+2026-09-03T17:31:16.603994Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12900 segment=50
+2026-09-03T17:31:22.803245Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=12936 segment=24
+2026-09-03T17:31:25.199891Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13158 segment=51
+2026-09-03T17:31:29.331282Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13144 segment=31
+2026-09-03T17:31:33.839569Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13416 segment=52
+2026-09-03T17:31:40.810762Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13475 segment=25
+2026-09-03T17:31:42.425677Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13674 segment=53
+2026-09-03T17:31:43.447291Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13568 segment=32
+2026-09-03T17:31:51.059899Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13932 segment=54
+2026-09-03T17:31:57.603420Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=13992 segment=33
+2026-09-03T17:31:58.773781Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14014 segment=26
+2026-09-03T17:31:59.646683Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14190 segment=55
+2026-09-03T17:32:04.236424Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=23094 segment=6
+2026-09-03T17:32:08.256072Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14448 segment=56
+2026-09-03T17:32:11.751817Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14416 segment=34
+2026-09-03T17:32:16.780580Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14553 segment=27
+2026-09-03T17:32:16.887131Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14706 segment=57
+2026-09-03T17:32:25.495731Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14964 segment=58
+2026-09-03T17:32:25.852564Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=14840 segment=35
+2026-09-03T17:32:34.092450Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15222 segment=59
+2026-09-03T17:32:34.730555Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15092 segment=28
+2026-09-03T17:32:40.010523Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15264 segment=36
+2026-09-03T17:32:42.702137Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15480 segment=60
+2026-09-03T17:32:51.304309Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15738 segment=61
+2026-09-03T17:32:52.739482Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15631 segment=29
+2026-09-03T17:32:54.126512Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15688 segment=37
+2026-09-03T17:32:59.903413Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=15996 segment=62
+2026-09-03T17:33:08.253384Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16112 segment=38
+2026-09-03T17:33:08.536628Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16254 segment=63
+2026-09-03T17:33:10.713635Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16170 segment=30
+2026-09-03T17:33:17.141452Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16512 segment=64
+2026-09-03T17:33:22.181286Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=26943 segment=7
+2026-09-03T17:33:22.384851Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16536 segment=39
+2026-09-03T17:33:25.733775Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16770 segment=65
+2026-09-03T17:33:28.690430Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16709 segment=31
+2026-09-03T17:33:34.387299Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17028 segment=66
+2026-09-03T17:33:36.510142Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=16960 segment=40
+2026-09-03T17:33:42.933270Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17286 segment=67
+2026-09-03T17:33:46.672723Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17248 segment=32
+2026-09-03T17:33:50.693675Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17384 segment=41
+2026-09-03T17:33:51.572310Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17544 segment=68
+2026-09-03T17:34:00.155501Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17802 segment=69
+2026-09-03T17:34:04.670030Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17787 segment=33
+2026-09-03T17:34:04.794155Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=17808 segment=42
+2026-09-03T17:34:08.789941Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=18060 segment=70
+2026-09-03T17:34:17.401624Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=18318 segment=71
+2026-09-03T17:34:18.911537Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=18232 segment=43
+2026-09-03T17:34:22.657466Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=18326 segment=34
+2026-09-03T17:34:25.997567Z [info     ] stream_discontinuity_detected  [video.decoding.decoder] frame_id=18576 segment=72
+2026-09-03T17:34:29.685117Z [info     ] stream_disconnected            [video.inputs.local_file] source=local_file
+2026-09-03T17:34:29.727127Z [info     ] stream_disconnected            [video.inputs.local_file] source=local_file
+2026-09-03T17:34:29.764967Z [info     ] stream_disconnected            [video.inputs.local_file] source=local_file
+2026-09-03T17:34:29.802965Z [info     ] stream_disconnected            [video.inputs.local_file] source=local_file

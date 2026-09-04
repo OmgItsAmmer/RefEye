@@ -1,29 +1,54 @@
 # App Theme
 
-Dark, professional visual system for the desktop app. Colors are drawn from
-football (pitch green, ball white) but desaturated and used as accents on a
-neutral dark base — not as dominant surface colors.
+Monochrome, technical, "operator console" visual system for the desktop app —
+cloned from the reference implementation at `sample_ui/` (a Tauri/React video
+management console). The design language: near-black surfaces, a single
+off-white primary used for every interactive/active state, razor-thin
+borders, sharp geometric corners, and uppercase micro-labels set in a
+monospace face wherever the value is technical/data-like. Color is almost
+never decorative — status dots and the alert/success hues are the only place
+saturated color appears at all.
 
-Reference implementation location: `apps/desktop/ui/theme` (centralized QSS,
-per M1.4). No inline/ad-hoc styling on individual widgets.
+Reference implementation location: `apps/desktop/ui/theme` (centralized QSS +
+tokens, per M1.4). No inline/ad-hoc styling on individual widgets. Font files
+are vendored in `apps/desktop/ui/theme/fonts/` and loaded at startup via
+`QFontDatabase.addApplicationFont` — the app must render identically with no
+network access and no fonts pre-installed on the machine.
 
 ---
 
 ## 1. Design Principles
 
-* **Neutral base, colored accents.** Backgrounds and panels stay charcoal/slate.
-  Color is reserved for meaning: state, action, status — never decoration.
-* **One accent color dominates.** The muted pitch-green is the single primary
-  accent. Info/warning/error exist but are used sparingly and only for their
-  semantic purpose.
-* **No saturated primaries.** Avoid pure red/green/yellow — they read as game
-  UI. Every hue below is pulled down in saturation and lightness from its
-  "obvious" sports equivalent.
-* **Off-white, not white.** Pure white text on a dark background is harsh.
-  Text colors are warm-neutral grays.
-* **Single-hue for data, not traffic-light coding.** Confidence scores,
-  candidate rankings, etc. use shades of one hue (the accent), not a
-  red→yellow→green gradient.
+* **Monochrome first.** One primary color — an off-white, `#FAFAFA`, never
+  pure `#FFFFFF` — carries every active/selected/primary-action state. There
+  is no colored "brand accent." This reads as a premium, zero-distraction
+  console rather than a themed consumer app.
+* **True near-black, not charcoal.** Surfaces are genuinely dark
+  (`#121212` base, `#1A1A1A` panel) — darker and flatter than the previous
+  pitch-green iteration of this theme. Depth comes from a two-step surface
+  ramp plus hairline borders, not from lightness gradients.
+* **Color is reserved for two states only.** Red (`#FF3366`) means alert/
+  recording/error. Green (`#00FF66`) means active/success/streaming — used
+  exclusively as a small status dot, never as a fill, button, or large
+  surface. Nothing else on screen is allowed to borrow these hues.
+* **Uppercase + wide tracking for labels, sentence case for content.**
+  Section headers, button labels, status text, and metadata captions are
+  uppercase with wide letter-spacing, set small (9–11px). Actual content
+  (camera names, headings, body copy) stays sentence case at a normal
+  weight. Mixing the two signals what's chrome vs. what's data.
+* **Two-typeface system.** `Outfit` (a geometric humanist sans) is the UI
+  voice — headings, labels, buttons, body text. `Space Mono` is the data
+  voice — anything technical or numeric: timestamps, identifiers, source
+  paths, on-video HUD text, counters. A value that looks "measured" should be
+  in Space Mono; a value that's prose should be in Outfit.
+* **Sharp, not rounded.** Corners are small (2–8px) or square. Nothing in
+  this system uses a large soft border-radius. The only fully round shapes
+  are status dots and count badges.
+* **Flat surfaces, glow only on the video canvas.** UI chrome (panels,
+  buttons, sidebars) never has a drop shadow or glow. Soft colored glow is
+  reserved for things actually drawn on top of live video (zone outlines,
+  line-crossing strokes) — it reads as "projected onto the feed," not as a
+  UI embellishment.
 
 ---
 
@@ -31,69 +56,83 @@ per M1.4). No inline/ad-hoc styling on individual widgets.
 
 ### Surfaces
 
-| Token                 | Hex         | Usage                             |
-| --------------------- | ----------- | --------------------------------- |
-| `--bg-base`         | `#12161C` | App window background             |
-| `--bg-panel`        | `#1D222B` | Cards, panels, side bars          |
-| `--bg-panel-raised` | `#242A34` | Hover state / elevated panel      |
-| `--border`          | `#2A303B` | Default hairline border           |
-| `--border-strong`   | `#3A4150` | Emphasized divider, focus outline |
+| Token           | Hex       | Usage                                     |
+| --------------- | --------- | ------------------------------------------ |
+| `--bg-base`     | `#121212` | App window background                      |
+| `--bg-surface`  | `#1A1A1A` | Panels, cards, sidebar, top bar             |
+| `--bg-surface-2`| `#222222` | Hover/raised state on a surface             |
+| `--border`      | `#2A2A2A` | Default hairline border                     |
+| `--border-strong`| `#3A3A3A`| Emphasized divider / focus ring fallback    |
 
 ### Text
 
-| Token                | Hex         | Usage                        |
-| -------------------- | ----------- | ---------------------------- |
-| `--text-primary`   | `#E8E9ED` | Primary body/label text      |
-| `--text-secondary` | `#D5D8DE` | Secondary text               |
-| `--text-muted`     | `#8B92A0` | Captions, disabled, metadata |
-| `--text-disabled`  | `#4B525E` | Disabled control labels      |
+| Token             | Hex       | Usage                                  |
+| ------------------ | --------- | --------------------------------------- |
+| `--text-primary`  | `#FAFAFA` | Same value as `--primary` — active/emphasized text |
+| `--text-main`     | `#E0E0E0` | Default body/label text                 |
+| `--text-muted`    | `#525252` | Captions, disabled, secondary metadata  |
+| `--text-disabled` | `#3A3A3A` | Disabled control labels                 |
 
-### Accent — Pitch Green (primary)
+### Primary (monochrome accent)
 
-| Token                     | Hex                       | Usage                                          |
-| ------------------------- | ------------------------- | ---------------------------------------------- |
-| `--accent`              | `#4A8C72`               | Primary buttons, active states, links          |
-| `--accent-hover`        | `#5A9C82`               | Hover state on accent elements                 |
-| `--accent-bg`           | `rgba(74,140,114,0.15)` | Accent tint background (badges, selected rows) |
-| `--accent-text-on-fill` | `#0D1A15`               | Text/icon color on solid accent fill           |
-| `--accent-text`         | `#6FBFA0`               | Accent-colored text on dark background         |
+| Token                  | Value                    | Usage                                             |
+| ---------------------- | ------------------------ | -------------------------------------------------- |
+| `--primary`           | `#FAFAFA`               | Active nav item, focused/primary button, selected state |
+| `--primary-bg`        | `rgba(250,250,250,0.10)`| Tint background for selected rows / hover fill      |
+| `--primary-border`    | `rgba(250,250,250,0.35)`| Border on an outlined-primary control               |
+| `--primary-text-on-fill` | `#121212`             | Text on a solid-primary-filled surface (rare — most primary controls are outlined, not filled) |
 
-### Semantic — Info / Warning / Danger
+### Semantic — used only for these two states, nowhere else
 
-| Token           | Hex                      | Usage                                    |
-| --------------- | ------------------------ | ---------------------------------------- |
-| `--info`      | `#5B7FA6`              | Informational highlights, neutral status |
-| `--warning`   | `#C99A4A`              | Non-critical warnings (e.g. degraded AI) |
-| `--danger`    | `#B5544B`              | Errors, failed requests                  |
-| `--danger-bg` | `rgba(181,84,75,0.15)` | Error banner background                  |
+| Token           | Hex/Value                | Usage                                    |
+| --------------- | -------------------------- | ------------------------------------------ |
+| `--alert`      | `#FF3366`                 | Recording indicator, errors, intrusion/danger |
+| `--alert-bg`   | `rgba(255,51,102,0.10)`   | Alert tint background                       |
+| `--success`    | `#00FF66`                 | Streaming/online/confirmed status dot only  |
 
-### Data / Ranking (single-hue ramp, accent-based)
+### Data ramp (single hue, never traffic-light)
 
-Use for candidate confidence, ranking order — not red/yellow/green.
+Candidate ranking still uses one hue ramped by opacity against the primary —
+consistent with the rest of the app's "no traffic-light coding" rule, just
+now expressed in monochrome instead of green:
 
-| Token                 | Hex         | Usage          |
-| --------------------- | ----------- | -------------- |
-| `--rank-1`(highest) | `#4A8C72` | Best candidate |
-| `--rank-2`          | `#3E7862` | 2nd            |
-| `--rank-3`          | `#325F4F` | 3rd            |
-| `--rank-4`(lowest)  | `#26493C` | 4th+           |
+| Token          | Value                    | Usage          |
+| -------------- | --------------------------- | -------------- |
+| `--rank-1`    | `rgba(250,250,250,0.90)`   | Best candidate |
+| `--rank-2`    | `rgba(250,250,250,0.65)`   | 2nd            |
+| `--rank-3`    | `rgba(250,250,250,0.40)`   | 3rd            |
+| `--rank-4`    | `rgba(250,250,250,0.22)`   | 4th+           |
 
 ---
 
 ## 3. Typography
 
-* Font family: system default (Segoe UI on Windows) — no custom font unless
-  branding requires it.
-* Two weights only: regular (400) and medium (500). Avoid bold (600+) —
-  reads heavy against the dark surface.
-* Sentence case throughout. No ALL CAPS, no Title Case except proper nouns.
+* **UI face:** `Outfit` — weights 400 (Regular), 500 (Medium), 600 (SemiBold).
+  Vendored as a variable font (`fonts/Outfit[wght].ttf`); the three weights
+  above are the only ones used.
+* **Data face:** `Space Mono` — Regular 400, Bold 700, Italic 400. Vendored
+  as static TTFs. Used for: timestamps, frame/candidate counters, source
+  paths and codec strings, on-video HUD text, diagnostic values.
+* **Case rule:** UI chrome (section headers, button labels, status text,
+  metadata captions) is uppercase with wide letter-spacing. Content (a
+  camera name, a heading describing what the panel shows, body sentences,
+  descriptions) stays sentence case. When in doubt: if it's a label
+  *about* something, uppercase it; if it *is* the something, don't.
+* **No text-transform in QSS** — Qt style sheets don't support
+  `text-transform` or `letter-spacing`. Uppercase labels are uppercased in
+  Python at the call site (a single `.upper()` on the string, never a
+  stylesheet trick); letter-spacing is applied via
+  `QFont.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, px)` on that
+  widget's font.
 
-| Role                 | Size | Weight | Color              |
-| -------------------- | ---- | ------ | ------------------ |
-| Panel heading        | 16px | 500    | `--text-primary` |
-| Body / labels        | 13px | 400    | `--text-primary` |
-| Secondary / metadata | 12px | 400    | `--text-muted`   |
-| Button label         | 13px | 500    | context-dependent  |
+| Role                     | Size | Weight | Face        | Case / tracking             | Color            |
+| ------------------------- | ---- | ------ | ----------- | ---------------------------- | ------------------ |
+| Screen/section title      | 15px | 600    | Outfit      | UPPERCASE, +1.5px tracking   | `--text-main`    |
+| Panel content heading      | 18px | 600    | Outfit      | Sentence case                | `--text-main`    |
+| Body / labels              | 13px | 400    | Outfit      | Sentence case                | `--text-main`    |
+| Micro caption / meta label | 10px | 500    | Outfit      | UPPERCASE, +1px tracking     | `--text-muted`   |
+| Data value (timestamp, id) | 11px | 400    | Space Mono  | As-is                        | `--text-main`    |
+| Button label               | 10px | 600    | Outfit      | UPPERCASE, +1.5px tracking   | context-dependent |
 
 ---
 
@@ -101,194 +140,155 @@ Use for candidate confidence, ranking order — not red/yellow/green.
 
 ### Buttons
 
-* **Primary** (e.g. "Confirm frame"): solid `--accent` fill, `--accent-text-on-fill`
-  text, no border. One primary button per view max.
-* **Secondary** (e.g. "Prev/Next frame"): transparent fill, `0.5px solid --border`,
-  `--text-primary` label. Hover → `--bg-panel-raised`.
-* Avoid disabling buttons where possible; if disabled, drop opacity of label
-  to `--text-disabled` rather than graying the whole control.
+* **Default control** — outlined, not filled: transparent background,
+  `1px solid --border`, `--text-main` label, small sharp radius (`4px`).
+  Hover → border and label both step to `--primary`, background tints to
+  `--primary-bg`. This "outline that lights up on hover" is the single most
+  characteristic control in the system — almost nothing is a solid fill.
+* **Primary action** (e.g. "Confirm frame"): still outlined, using
+  `--primary-border` at rest and `--primary` + filled `--primary-bg` on
+  hover/pressed, `--text-primary` label. One primary action per view. A
+  *filled* primary button (solid `--primary` background) is reserved for
+  exactly one place: nowhere in the reference app, in fact — the sample
+  never fills a button solid. Keep that restraint here too; "primary" means
+  brighter outline + brighter label, not a filled block.
+* **Danger control** (stop recording, retry after failure): `--alert`
+  border and label at rest, `--alert-bg` fill on hover.
+* Label text is always UPPERCASE, bold(ish) 600 weight, wide tracking, 10px.
+* Disabled: label drops to `--text-disabled`, border drops to `--border`,
+  cursor stays default. Never gray out the whole control block.
 
-### Status badges (candidate labels, model status, etc.)
+### Status dots (not badges — this system prefers a dot + label, not a pill)
 
-* Background: role-appropriate `-bg` tint (e.g. `--accent-bg`)
-* Text: role-appropriate `-text` color (e.g. `--accent-text`)
-* Never plain-color text on a tinted background — always pull from the same
-  hue family.
+* A `6px` (rendered slightly larger for legibility on desktop, `8px`)
+  circular dot in the semantic color, followed by an uppercase Space-Mono-
+  or-Outfit micro-label.
+* `--success` dot = streaming/ready/confirmed. `--alert` dot = error/
+  disconnected/recording. `--primary` dot (pulsing) = connecting/in-progress.
+  `--text-muted`-colored dot = idle/neutral/no data.
+* The recording dot pulses (expanding ring) — the one place in the whole
+  system a status indicator animates on its own without user interaction.
+
+### Count / unread badges (the one place a filled pill is correct)
+
+* Small rounded-full pill, tinted background matching the semantic color at
+  low opacity, semantic-colored bold numeral text. Used only for a count
+  (unread alerts, queue depth) — never for a state label (states get a dot,
+  not a pill).
 
 ### Panels / Cards
 
-* `--bg-panel` background, `0.5px solid --border`, `12px` corner radius,
-  `16px` internal padding.
-* No drop shadows. Flat surfaces only — depth comes from color contrast
-  between `--bg-base` and `--bg-panel`, not shadows.
+* `--bg-surface` background, `1px solid --border`, `8px` corner radius
+  (sharper than the previous 12–14px), `16–24px` internal padding depending
+  on density.
+* No drop shadows, no gradients on chrome. Flat surfaces; depth is the
+  `--bg-base` → `--bg-surface` → `--bg-surface-2` step, nothing else.
+* A panel with a section header uses the micro-caption style (10px
+  uppercase, `--text-muted`, wide tracking) for that header — not the 18px
+  content-heading style, which is reserved for a heading that names actual
+  content (e.g. a candidate's action type), not chrome.
+
+### On-video overlays (badges drawn over the live feed)
+
+* `--bg-surface` at ~80% opacity + a hairline `--border`, small sharp
+  radius. This is the one place a "glassy" translucent surface is correct —
+  everywhere else surfaces are opaque.
+* Text inside an on-video badge uses Space Mono at 10–11px, since it's
+  reporting a technical value (source name, frame id, codec).
 
 ### Diagnostics / secondary panels
 
-* Slightly recessed: `--bg-base` background instead of `--bg-panel`, to
-  visually de-emphasize relative to the main review panel.
+* Recessed: `--bg-base` background instead of `--bg-surface`, same border
+  and radius, to visually de-emphasize relative to the main panels.
 
 ---
 
 ## 5. States
 
-| State                    | Treatment                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| Hover (buttons/rows)     | Background steps to `--bg-panel-raised`or `--accent-hover`                 |
-| Active/pressed           | Scale 0.98 or darken fill by one step                                          |
-| Selected (candidate row) | `--accent-bg`background,`--border-strong`left border (2px, square corners) |
-| Disabled                 | Label →`--text-disabled`, no background change                              |
-| Focus (keyboard)         | `1px solid --accent`outline, no glow/blur                                    |
+| State                     | Treatment                                                                 |
+| -------------------------- | --------------------------------------------------------------------------- |
+| Hover (buttons)             | Border + label → `--primary`; background tints to `--primary-bg`         |
+| Hover (rows / list items)   | Background steps to `--bg-surface-2`                                     |
+| Active/pressed              | Background one step darker than hover; no scale transform                |
+| Selected (nav item, row)    | `--primary-bg` background + `2px solid --primary` left border (square, not rounded) |
+| Disabled                    | Label → `--text-disabled`, border → `--border`, no background change     |
+| Focus (keyboard)            | `1px solid --primary` outline, no glow/blur                              |
+| Recording / live-alert dot  | Pulses: scale 0.95→1.0 with an expanding, fading ring shadow, 2s loop     |
 
 ---
 
-## 6. Loaders
+## 6. Motion
 
-Two loader types. Which one appears is fully deterministic — driven by the
-`AnalysisRequest` state, not by "feel" or per-screen choice.
+Real, deliberate motion — not decorative. Each transition exists to make a
+state change legible, matching the reference app's actual animation
+vocabulary:
 
-### Primary — Card swap (red / yellow)
+| Motion               | Duration / easing        | Used for                                             |
+| ---------------------- | --------------------------- | ------------------------------------------------------- |
+| Fade + rise-in         | 400ms ease-out              | A panel/tile appearing (e.g. a candidate row being added), staggered ~100ms per item in a list |
+| Scale-in               | 200ms ease-out              | A popover/flyout or a newly-selected card              |
+| Slide-in from edge     | 200ms ease-out              | A side flyout (e.g. a configurator panel) entering      |
+| Hover reveal           | 150–200ms ease, opacity+transform | Bottom hover-controls bar on a video tile, tooltips |
+| Pulse (status dot)     | 2s ease, infinite            | Recording indicator only                                |
+| Accordion expand       | 260ms ease (height/size)     | A collapsible section (diagnostics panel) opening       |
 
-* A red card and a yellow card, both on screen simultaneously, with a subtle
-  3D tilt (`perspective` + `rotateY`), continuously swapping horizontal
-  position in a loop.
-* Reserved for the single highest-stakes wait in the app: the AI is deciding.
-* Colors stay true to their referee-card identity here — this is the one
-  deliberate exception to the desaturated palette, because the metaphor
-  ("waiting on a decision") only reads if the cards are recognizable.
-
-**Trigger (deterministic):** shown whenever an `AnalysisRequest` is in
-`QUEUED` or `RUNNING` state — i.e. the operator pressed the hotkey and the
-pipeline is producing candidates. Hidden the instant the request reaches
-`COMPLETED` or `FAILED`.
-
-### Secondary — Football spin
-
-* A ball icon (pentagon/hexagon panel pattern) in continuous rotation.
-* Neutral, low-emphasis — communicates "something is loading" without
-  implying a decision is being made.
-
-**Trigger (deterministic):** shown for any blocking wait that is *not* tied
-to an `AnalysisRequest` — app startup / model warm-up, opening or buffering a
-video file, retry-on-failure reconnect attempts, any other infrastructure/IO
-wait.
-
-### Rule of thumb
-
-> If the wait is tied to an `AnalysisRequest`, use the card swap.
-> If it's infrastructure/IO, use the football spin.
-
-Never show both at once — they represent mutually exclusive states of the app.
-
-### Implementation — Card swap
-
-```css
-.loader-cards {
-  position: relative;
-  width: 90px;
-  height: 90px;
-  perspective: 600px;
-}
-
-.loader-cards .card {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 34px;
-  height: 48px;
-  border-radius: 4px;
-  margin: -24px 0 0 -17px;
-  transform-style: preserve-3d;
-  animation-duration: 1.6s;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
-}
-
-.loader-cards .card--yellow {
-  background: #C99A4A;
-  animation-name: card-swap-right;
-}
-
-.loader-cards .card--red {
-  background: #B5544B;
-  animation-name: card-swap-left;
-  animation-delay: 0s; /* both cards run in lockstep, no offset */
-}
-
-@keyframes card-swap-right {
-  0%   { transform: translateX(-26px) rotateY(25deg); }
-  50%  { transform: translateX(26px)  rotateY(-25deg); }
-  100% { transform: translateX(-26px) rotateY(25deg); }
-}
-
-@keyframes card-swap-left {
-  0%   { transform: translateX(26px)  rotateY(-25deg); }
-  50%  { transform: translateX(-26px) rotateY(25deg); }
-  100% { transform: translateX(26px)  rotateY(-25deg); }
-}
-```
-
-Markup:
-
-```html
-<div class="loader-cards">
-  <div class="card card--yellow"></div>
-  <div class="card card--red"></div>
-</div>
-```
-
-Notes:
-
-* Both cards animate on the same 1.6s loop, exactly out of phase, so they
-  continuously cross paths at center.
-* `rotateY` peaks at the midpoint crossing to sell the 3D pass-through.
-* Z-order (`z-index`) is intentionally left unset/equal — the slight overlap
-  at crossing is fine and reads as depth, not a bug.
-
-### Implementation — Football spin
-
-```css
-.loader-ball {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: #D5D8DE;
-  animation: ball-spin 1.2s linear infinite;
-}
-
-@keyframes ball-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-```
-
-Markup (pentagon pattern as inline SVG so it rotates as one unit with the ball):
-
-```html
-<div class="loader-ball">
-  <svg viewBox="0 0 100 100" width="44" height="44">
-    <polygon points="50,20 62,32 58,48 42,48 38,32" fill="#1D222B"/>
-    <line x1="50" y1="20" x2="50" y2="5"  stroke="#1D222B" stroke-width="3"/>
-    <line x1="62" y1="32" x2="80" y2="25" stroke="#1D222B" stroke-width="3"/>
-    <line x1="58" y1="48" x2="70" y2="65" stroke="#1D222B" stroke-width="3"/>
-    <line x1="42" y1="48" x2="30" y2="65" stroke="#1D222B" stroke-width="3"/>
-    <line x1="38" y1="32" x2="20" y2="25" stroke="#1D222B" stroke-width="3"/>
-  </svg>
-</div>
-```
-
-Notes:
-
-* Linear timing, constant speed — this loader should feel mechanical/neutral,
-  not bouncy or eased (that emphasis is reserved for the card swap).
-* Single continuous rotation, no direction change, no pause.
+Qt has no CSS-transition equivalent in QSS, so every one of the above is a
+real `QPropertyAnimation`/`QVariantAnimation` in code — see
+`apps/desktop/ui/widgets/common.py` (`AnimatedButton`, `apply_elevation` is
+retired — no more drop shadows — replaced by `PulsingDot`) and
+`apps/desktop/ui/widgets/loaders.py`.
 
 ---
 
-## 7. What to Avoid
+## 7. Loaders
 
-* Pure white (`#FFFFFF`) or pure black (`#000000`) anywhere.
-* Saturated grass-green (`#2ECC71`-class) or ball-white as large fill areas.
-* Red/yellow/green traffic-light coding for anything other than genuine
-  error/warning/success states.
-* Gradients, glows, neon borders, drop shadows — flat surfaces only.
-* More than one accent-filled primary action visible at once.
+The two-loader system (deterministic, driven by `AnalysisRequest` state, not
+by "feel") is a domain feature of this app with no equivalent in the
+reference UI — the reference app's only loading indicator is a plain
+spinning ring. Rather than deleting a loading state that carries real
+information (AI-deciding vs. plain infra-wait), both loaders are kept but
+re-skinned in the new monochrome language: their surrounding chrome
+(caption text, panel, borders) now follows the tokens above, while the two
+loaders themselves keep their existing distinct identities:
+
+* **Card swap** (`CardSwapLoader`) — reserved for "the AI is deciding"
+  (`AnalysisRequest` `QUEUED`/running). Referee-card colors stay true
+  (yellow/red) — the one deliberate exception to the monochrome rule, same
+  reasoning as before: the metaphor only reads if the cards are
+  recognizable.
+* **Football spin** (`FootballSpinLoader`) — any infrastructure/IO wait.
+  Restyled to sit on `--bg-surface` with a thin `--border` ring accent
+  instead of the previous green glow, so it reads as part of this system
+  rather than the old pitch-green one.
+
+Trigger rules, animation timing, and "never show both at once" are
+unchanged from the previous revision of this document.
+
+---
+
+## 8. Icons
+
+The reference app uses Google's Material Symbols variable icon font
+everywhere. Bundling and wiring up a full icon font is out of scope for this
+pass (it would mean adding thousands of glyphs and a new
+`QFontDatabase`-driven icon-widget layer with no icons currently drawn
+anywhere in this codebase to replace). Controls keep this app's existing
+text/glyph-based affordances (`‹ › ⏮` etc.) rendered in Outfit, sized and
+spaced per the button rules above, rather than introducing an icon font
+half-used across only some controls.
+
+---
+
+## 9. What to Avoid
+
+* Pure white (`#FFFFFF`) or pure black (`#000000`) anywhere — use `#FAFAFA`
+  / `#121212`.
+* Any color as a large fill area other than the two near-black surface tones.
+* A solid-filled button — every button in this system is outlined; only its
+  border/label color and background tint change with emphasis/state.
+* Drop shadows or glows on UI chrome (panels, buttons, sidebars). Glow is
+  reserved for marks drawn on top of the live video.
+* Rounded-pill shapes anywhere except status dots and count badges.
+* Uppercase tracking on content text, or sentence case on chrome labels —
+  the two must not swap roles.
+* Red/green used for anything other than alert/success semantics.

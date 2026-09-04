@@ -1,12 +1,19 @@
 application:
-  name: "Soccer Analysis MVP"
-  environment: "development"   # development | demo | production
+  name: "RefEye"
+  environment: "demo"          # development | demo | production
 
 video:
   input_type: "local_file"     # local_file | capture_card | rtsp | srt | screen | ndi
-  local_file:
-    path: "./tests/fixtures/sample_match.mp4"
+  local_file:                  # Camera 1 — the one feed actually analyzed
+    path: "./data/videos/demo_video_offside_1.mp4"
     loop: true
+  preview_cameras:             # Cameras 2-4 — decode-and-display only
+    - path: "./data/videos/demo_video_offside_2.mp4"
+      loop: true
+    - path: "./data/videos/demo_video_offside_3.mp4"
+      loop: true
+    - path: "./data/videos/demo_video_offside_4.mp4"
+      loop: true
   analysis_resolution:
     width: 960
     height: 540
@@ -18,6 +25,10 @@ buffer:
   decoded_buffer_seconds: 20
   max_decoded_frames: 600
   max_encoded_packets: 3000
+  # Hard RAM ceiling for decoded frames; whichever limit binds first wins.
+  # At 960x540 BGR one frame is ~1.5 MB, so 512 MB holds roughly 13 seconds.
+  # Raise this only after checking the target workstation's available RAM.
+  max_decoded_megabytes: 512
 
 shortcuts:
   analyze: "F8"
@@ -27,31 +38,72 @@ shortcuts:
   next_candidate: "Down"
   jump_to_best: "Home"
   confirm_frame: "Return"
+  select_camera_1: "1"
+  select_camera_2: "2"
+  select_camera_3: "3"
+  select_camera_4: "4"
+  select_best: "B"
 
 ai:
   action_spotter:
+    # "tdeed" is the primary model (SoccerNetBall_challenge1 checkpoint —
+    # see models/tdeed/README.md for how to obtain it). If the checkpoint is
+    # ever missing or fails to load, the registry automatically degrades to
+    # `fallback_provider` and says so in the UI rather than refusing to start.
     provider: "tdeed"
+    fallback_provider: "kinematic"
+
+    # Kinematic baseline thresholds. PROVISIONAL — these have not been
+    # validated against real broadcast footage. Tune on client clips before
+    # quoting any accuracy figure.
+    min_direction_change_deg: 25.0
+    min_speed_ratio: 1.35
+    proximity_radius_px: 90.0
+    min_score: 0.15
 
   providers:
     tdeed:
-      checkpoint: "./models/tdeed/model.pt"
+      checkpoint: "./models/tdeed/checkpoint_best.pt"
     footpass:
       checkpoint: "./models/footpass/model.pt"
     soccernet:
       checkpoint: "./models/soccernet/model.pt"
 
   detector:
+    # "yolo" for real footage; "fixture" for the generated synthetic clip
+    # (colour-blob detector, development only — see fixture_detector.py).
+    # The bundled demo cameras are real broadcast clips, so this must be
+    # "yolo" — "fixture" matches raw HSV color ranges anywhere in the frame
+    # (kits, ad boards, flags, scoreboard graphics) and produces exactly the
+    # wild, oversized, mispositioned boxes that look like a detection bug
+    # but are actually "the wrong detector running on the wrong footage."
     provider: "yolo"
-    checkpoint: "./models/detector/yolo_ball_player.onnx"
+    checkpoint: "./models/detector/yolo11n.pt"
     confidence_threshold: 0.35
+    # The ball is tiny, blurred and often occluded — hold it to a looser bar
+    # than people and let trajectory logic reject the noise.
+    ball_confidence_threshold: 0.15
+    imgsz: 640
+    # Background detection runs on every Nth frame; the triggered path always
+    # analyses every frame in its window.
+    live_frame_stride: 3
 
   tracker:
     provider: "bytetrack"
+    high_threshold: 0.5
+    low_threshold: 0.2
+    match_iou: 0.25
+    max_misses: 15
+    ball_max_gap_frames: 6
+
+  feature_cache:
+    max_frames: 900
 
   contact_refinement:
     enabled: true
     window_before_frames: 12
     window_after_frames: 12
+    proximity_radius_px: 90.0
     weights:
       model: 0.4
       proximity: 0.2
@@ -63,9 +115,16 @@ ai:
   candidate_ranking:
     max_candidates_returned: 5
     dedup_temporal_distance_frames: 8
+    weight_final_score: 0.6
+    weight_ball_visibility: 0.15
+    weight_track_quality: 0.1
+    weight_temporal_recency: 0.15
+    # Frames frozen either side of each candidate so frame-by-frame review is
+    # unaffected by the live buffer evicting underneath it.
+    review_frames_each_side: 15
 
 runtime:
-  device: "cuda"          # cuda | cpu
+  device: "cuda"          # cuda | cpu — "cuda" means prefer GPU, auto-fallback to CPU if unavailable
   inference_scheduler:
     max_queue_size: 16
 
@@ -79,3 +138,4 @@ logging:
 
 persistence:
   sqlite_path: "./storage/settings/app.db"
+  exports_directory: "./exports"   # confirmed frames are saved here as JPEGs

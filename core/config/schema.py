@@ -18,6 +18,10 @@ class StrictModel(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+#: Spotters that work from live CV features and need no model checkpoint.
+CHECKPOINTLESS_PROVIDERS = frozenset({"kinematic"})
+
+
 # --------------------------------------------------------------------------
 # application
 # --------------------------------------------------------------------------
@@ -41,7 +45,14 @@ class AnalysisResolutionConfig(StrictModel):
 
 class VideoConfig(StrictModel):
     input_type: Literal["local_file", "capture_card", "rtsp", "srt", "screen", "ndi"]
+    #: Camera 1 — the one real analysis source (architecture.md's single-
+    #: stream analysis pipeline). Live CV/tracking/triggered analysis all run
+    #: against this feed only.
     local_file: LocalFileVideoConfig
+    #: Cameras 2..4 on Live Grid — decode-and-display only, each its own
+    #: independent file/loop, never analyzed or buffered for `get_recent_clip`.
+    #: A tile for a camera with no entry here just stays "No signal".
+    preview_cameras: list[LocalFileVideoConfig] = Field(default_factory=list)
     analysis_resolution: AnalysisResolutionConfig
     # Cap on preview repaints per second. Decoding still runs at source rate;
     # this only bounds how often the UI thread is asked to repaint.
@@ -57,6 +68,10 @@ class BufferConfig(StrictModel):
     decoded_buffer_seconds: int = Field(gt=0)
     max_decoded_frames: int = Field(gt=0)
     max_encoded_packets: int = Field(default=3000, gt=0)
+    # The bound that actually protects RAM. A frame count is meaningless
+    # without the resolution behind it: 20s at 960x540 BGR is ~780 MB.
+    # Whichever limit binds first wins.
+    max_decoded_megabytes: int = Field(default=512, gt=0)
 
     @field_validator("encoded_buffer_seconds")
     @classmethod
@@ -81,6 +96,13 @@ class ShortcutsConfig(StrictModel):
     next_candidate: str
     jump_to_best: str
     confirm_frame: str
+    # Live Grid screen's bottom nav bar — jump straight to a camera's (or the
+    # best candidate's) analyzer view without touching the mouse.
+    select_camera_1: str
+    select_camera_2: str
+    select_camera_3: str
+    select_camera_4: str
+    select_best: str
 
 
 # --------------------------------------------------------------------------
@@ -92,16 +114,38 @@ class ProviderCheckpointConfig(StrictModel):
 
 class ActionSpotterConfig(StrictModel):
     provider: str
+    #: Used when `provider` cannot load (missing/unlicensed checkpoint), so the
+    #: app degrades instead of refusing to analyse (architecture.md section 49).
+    fallback_provider: str = "kinematic"
+
+    # Kinematic baseline tuning. Thresholds are provisional and must be
+    # validated on client footage before any accuracy claim is made.
+    min_direction_change_deg: float = Field(default=25.0, ge=0.0, le=180.0)
+    min_speed_ratio: float = Field(default=1.35, gt=1.0)
+    proximity_radius_px: float = Field(default=90.0, gt=0.0)
+    min_score: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
 class DetectorConfig(StrictModel):
     provider: str
     checkpoint: str
     confidence_threshold: float = Field(ge=0.0, le=1.0)
+    #: The ball is small, blurred and often occluded, so it gets a looser bar
+    #: than people (architecture.md section 14). None = half the main threshold.
+    ball_confidence_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    imgsz: int = Field(default=640, gt=0)
+    #: Run background detection on every Nth frame. Continuous full-rate
+    #: detection buys little and starves the triggered path (section 13).
+    live_frame_stride: int = Field(default=3, gt=0)
 
 
 class TrackerConfig(StrictModel):
     provider: str
+    high_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    low_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
+    match_iou: float = Field(default=0.25, ge=0.0, le=1.0)
+    max_misses: int = Field(default=15, ge=0)
+    ball_max_gap_frames: int = Field(default=6, ge=0)
 
 
 class RefinementWeights(StrictModel):
@@ -118,11 +162,27 @@ class ContactRefinementConfig(StrictModel):
     window_before_frames: int = Field(ge=0)
     window_after_frames: int = Field(ge=0)
     weights: RefinementWeights
+    #: Distance in analysis-resolution pixels within which a player counts as
+    #: being in contact range of the ball.
+    proximity_radius_px: float = Field(default=90.0, gt=0.0)
 
 
 class CandidateRankingConfig(StrictModel):
     max_candidates_returned: int = Field(gt=0)
     dedup_temporal_distance_frames: int = Field(ge=0)
+    #: Ranking blend. Kept in config so tuning never requires a code change
+    #: (architecture.md section 58, rule 11).
+    weight_final_score: float = Field(default=0.6, ge=0.0)
+    weight_ball_visibility: float = Field(default=0.15, ge=0.0)
+    weight_track_quality: float = Field(default=0.1, ge=0.0)
+    weight_temporal_recency: float = Field(default=0.15, ge=0.0)
+    #: Frames frozen either side of each candidate for review navigation.
+    #: Bounds review memory: candidates x (2N+1) JPEG frames.
+    review_frames_each_side: int = Field(default=15, ge=0, le=120)
+
+
+class FeatureCacheConfig(StrictModel):
+    max_frames: int = Field(default=900, gt=0)
 
 
 class AIConfig(StrictModel):
@@ -132,12 +192,19 @@ class AIConfig(StrictModel):
     tracker: TrackerConfig
     contact_refinement: ContactRefinementConfig
     candidate_ranking: CandidateRankingConfig
+    feature_cache: FeatureCacheConfig = Field(default_factory=FeatureCacheConfig)
 
     @field_validator("providers")
     @classmethod
     def _selected_provider_is_configured(cls, v: dict, info) -> dict:
         spotter = info.data.get("action_spotter")
-        if spotter is not None and spotter.provider not in v:
+        if spotter is None:
+            return v
+        # The kinematic baseline derives everything from live CV features and
+        # has no checkpoint, so it needs no ai.providers entry.
+        if spotter.provider in CHECKPOINTLESS_PROVIDERS:
+            return v
+        if spotter.provider not in v:
             raise ValueError(
                 f"action_spotter.provider '{spotter.provider}' has no entry under ai.providers"
             )
@@ -170,6 +237,7 @@ class LoggingConfig(StrictModel):
 
 class PersistenceConfig(StrictModel):
     sqlite_path: str
+    exports_directory: str
 
 
 # --------------------------------------------------------------------------

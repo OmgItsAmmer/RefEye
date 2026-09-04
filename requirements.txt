@@ -1,12 +1,22 @@
 # Pinned for reproducible builds. Generated/maintained alongside pyproject.toml.
-# Install with: pip install -r requirements.txt
+#
+# torch and torchvision are DELIBERATELY NOT listed here — `pip install -r
+# requirements.txt` always resolves them against plain PyPI, which only
+# publishes the CPU-only build. That silently produces a CPU-only install even
+# on a machine with a CUDA GPU (this bit us once — see Makefile `install`).
+# `make install` installs them separately, from PyTorch's CUDA index with an
+# automatic CPU fallback. If installing by hand:
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# Install the rest with: pip install -r requirements.txt
 pyside6>=6.7,<7.0
 av>=12.0
-torch>=2.3
 opencv-python>=4.9
 numpy>=1.26,<2.0
 onnxruntime-gpu>=1.18
 ultralytics>=8.2
+timm>=1.0            # T-DEED backbone (vendored in ai/action_spotting/tdeed/_vendor)
 pydantic>=2.7
 pyyaml>=6.0
 python-dotenv>=1.0

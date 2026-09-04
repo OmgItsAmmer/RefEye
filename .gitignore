@@ -19,6 +19,7 @@ logs/*.log
 logs/*.jsonl
 storage/cache/*
 !storage/cache/.gitkeep
+exports/*.jpg
 
 # Local config overrides
 config/local.yaml
@@ -40,3 +41,6 @@ Thumbs.db
 # Test fixtures (large video files kept out of git; use LFS or shared drive)
 tests/fixtures/*.mp4
 tests/fixtures/*.mkv
+
+# Sample / Scratch UI
+sample_ui/

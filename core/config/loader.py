@@ -24,6 +24,7 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
+from core.config.paths import ensure_editable_config, resolve
 from core.config.schema import AppSettings
 from core.errors.exceptions import ConfigurationError
 
@@ -34,14 +35,18 @@ ENV_PATH_SEPARATOR = "__"
 
 
 def load_settings(
-    config_path: str | Path = DEFAULT_CONFIG_PATH,
+    config_path: str | Path | None = None,
     local_path: str | Path | None = LOCAL_CONFIG_PATH,
     apply_env: bool = True,
 ) -> AppSettings:
+    # No explicit path: resolve against the application root and, in a
+    # packaged build, seed the operator-editable copy beside the executable.
+    if config_path is None:
+        config_path = ensure_editable_config()
     raw = _read_yaml(config_path, required=True)
 
     if local_path is not None:
-        overrides = _read_yaml(local_path, required=False)
+        overrides = _read_yaml(resolve(local_path), required=False)
         if overrides:
             raw = _deep_merge(raw, overrides)
 

@@ -13,6 +13,8 @@ dependencies = [
     "numpy>=1.26,<2.0",
     "onnxruntime-gpu>=1.18; sys_platform == 'win32'",
     "ultralytics>=8.2",
+    "timm>=1.0",
+    "torchvision>=0.18",
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
@@ -35,6 +37,12 @@ soccer-analysis = "apps.desktop.startup.main:main"
 [tool.pytest.ini_options]
 qt_api = "pyside6"
 testpaths = ["tests"]
+# Soak tests take minutes; excluded from the default run, opted into with
+# `pytest -m soak` (or `make soak`).
+addopts = "-m 'not soak'"
+markers = [
+    "soak: long-running stability/memory tests",
+]
 
 [tool.ruff]
 line-length = 100

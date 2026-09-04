@@ -1,0 +1,41 @@
+{
+  "video": "sample_match.mp4",
+  "fps": 25,
+  "width": 1280,
+  "height": 720,
+  "synthetic": true,
+  "events": [
+    {
+      "frame": 72,
+      "type": "cross",
+      "notes": "deep cross from the left",
+      "difficulty_tags": [
+        "synthetic"
+      ]
+    },
+    {
+      "frame": 160,
+      "type": "header",
+      "notes": "header on goal",
+      "difficulty_tags": [
+        "synthetic"
+      ]
+    },
+    {
+      "frame": 231,
+      "type": "goalkeeper_contact",
+      "notes": "keeper parries",
+      "difficulty_tags": [
+        "synthetic"
+      ]
+    },
+    {
+      "frame": 312,
+      "type": "shot",
+      "notes": "rebound shot",
+      "difficulty_tags": [
+        "synthetic"
+      ]
+    }
+  ]
+}

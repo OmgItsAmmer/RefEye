@@ -19,11 +19,14 @@ from pathlib import Path
 
 import structlog
 
+from core.config.paths import resolve
 from core.config.schema import LoggingConfig
 
 
 def configure_logging(config: LoggingConfig, session_id: str) -> None:
-    log_dir = Path(config.directory)
+    # Resolve against the app root: launching from a shortcut must not
+    # scatter logs into whatever directory happened to be current.
+    log_dir = resolve(config.directory)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     level = getattr(logging, config.level, logging.INFO)
