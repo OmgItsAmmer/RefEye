@@ -65,6 +65,7 @@ hiddenimports = [
     "vision.detection.fixture_detector",
     "ai.action_spotting.kinematic.spotter",
     "ai.action_spotting.tdeed.adapter",
+    "offside.body_keypoints.estimator",
     "ai.action_spotting.tdeed._vendor.model.model",
     "ai.action_spotting.tdeed._vendor.model.modules",
     "ai.action_spotting.tdeed._vendor.model.shift",

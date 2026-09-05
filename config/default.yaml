@@ -123,6 +123,147 @@ ai:
     # unaffected by the live buffer evicting underneath it.
     review_frames_each_side: 15
 
+# Milestone 2 — offside decision support. Each phase adds its own section here.
+offside:
+  # M2.2 — per-player body points. Offside is judged on feet/body, and a
+  # bounding box cannot say where a foot is, so a pose model runs on each
+  # player the detector already found.
+  body_keypoints:
+    enabled: true
+    provider: "yolo_pose"
+    # Not committed to git (models/**/*.pt) — see models/pose/README.md.
+    # Missing checkpoint = offside body points unavailable; M1 analysis is
+    # unaffected and the app still starts.
+    checkpoint: "./models/pose/yolo11n-pose.pt"
+
+    keypoint_confidence_threshold: 0.5
+    person_confidence_threshold: 0.25
+    # How much the pose's own box must overlap the player box it was cropped
+    # for. Padding a crop drags in neighbours; this rejects their skeletons
+    # instead of silently attaching one to the wrong player.
+    match_iou: 0.3
+
+    # Broadcast players are ~90-100px tall, far too small for whole-frame
+    # pose estimation (measured: 1-2 of 17 players found). Cropping each
+    # player and upscaling to this size finds 11-13 of 17 on the same frames.
+    crop_imgsz: 256
+    crop_padding_x: 0.25
+    crop_padding_y: 0.15
+    min_box_height_px: 24.0
+
+    # Confidence multipliers when a foot position had to be inferred rather
+    # than seen. Both < 1, so a guess can never outrank a measurement.
+    knee_projection_penalty: 0.55
+    bbox_fallback_penalty: 0.3
+
+    max_players_per_frame: 30
+    batch_size: 32
+
+  # M2.1 — mapping the angled camera view onto the pitch. Manual marking
+  # gives full metric calibration; the automatic path can find groups of
+  # parallel markings but cannot tell which group runs along the goal line,
+  # so it reports a lower capability level instead of guessing silently.
+  pitch_calibration:
+    enabled: true
+
+    # Laws permit a range of pitch sizes; 105x68 is the FIFA/UEFA standard.
+    # Penalty area, goal area and centre circle are fixed by the Laws and
+    # derived in code — deliberately not editable here.
+    pitch_length_m: 105.0
+    pitch_width_m: 68.0
+
+    max_reprojection_error_m: 2.0
+    # Vanishing-point agreement is judged by angle, not pixels: the point is
+    # usually thousands of pixels off-screen, where pixel limits mean nothing.
+    inlier_angle_deg: 2.5
+    min_family_support: 2
+    min_lines_for_auto: 4
+
+    line_detection:
+      grass_hue_min: 30
+      grass_hue_max: 95
+      grass_min_saturation: 40
+      # Brightness floor, not a "white" test: compression bleeds grass colour
+      # into the paint, and a strict white mask discards most of the line.
+      line_min_brightness: 150
+      # Keeps bright structures thinner than this; rejects advertising
+      # boards, sleeves and glare, which are the loudest false lines.
+      max_line_width_px: 15
+      tophat_threshold: 20
+      exclude_box_margin: 0.15
+      min_line_length_px: 50
+      max_line_gap_px: 25
+      hough_threshold: 40
+      merge_angle_deg: 4.0
+      merge_distance_px: 14.0
+      max_lines: 40
+
+  # M2.3 — who is attacking, who is defending, who is in goal.
+  #
+  # No kit colour appears here, and none ever should: the two teams are
+  # discovered from the footage on every run, so the tool works on a match
+  # nobody prepared for. What is tunable is how much evidence is required
+  # before an assignment is reported as confident.
+  #
+  # Colour distances below are CIELAB units (~dE76): ~2.3 is "a trained eye
+  # can just tell them apart", ~50 is "obviously different colours".
+  team_assignment:
+    enabled: true
+    provider: "jersey_color"
+
+    # Where the shirt is sampled: the quad between shoulders and hips, pulled
+    # in from its own edges. Averaging the whole player box measures mostly
+    # grass at broadcast framing.
+    torso_keypoint_confidence: 0.4
+    torso_shrink: 0.7
+    # Used when those keypoints are missing — a player who cannot be posed
+    # still needs a team, or the defender ranking silently loses them.
+    fallback_top_fraction: 0.18
+    fallback_bottom_fraction: 0.45
+    fallback_width_fraction: 0.5
+
+    # Bare arms look the same on both teams, so skin is removed along with
+    # grass. Dark pixels are deliberately kept: filtering them out would make
+    # black and navy kits unmeasurable.
+    exclude_skin: true
+    min_sample_pixels: 20
+    min_kept_fraction: 0.35
+    min_sample_confidence: 0.25
+
+    min_players_for_clustering: 6
+    confident_player_count: 10
+    # The goalkeeper/referee cut is derived from the frame itself (median
+    # residual + N MADs), never from a fixed colour — how tight a kit measures
+    # depends on the broadcast, the floodlights and the compression.
+    outlier_mad_scale: 3.0
+    min_outlier_distance: 18.0
+    # A group this small is not a team. Colour distance alone never catches a
+    # lone odd kit — a group of one sits exactly on its own centre — and while
+    # it survives it holds one of the two team slots, forcing the real kits to
+    # share the other. Measured on the reference clip: without this, a single
+    # player in red split off and white and maroon were reported as one team.
+    min_cluster_fraction: 0.2
+    min_cluster_size: 3
+    max_trim_rounds: 3
+    good_separation: 25.0
+    min_separation_ratio: 2.0
+    max_iterations: 25
+    assignment_margin: 6.0
+
+    # A goalkeeper is an odd kit that also stands alone behind everyone else.
+    # Metres when the pitch is calibrated; otherwise a fraction of the spread
+    # of all players along the goal-to-goal axis.
+    goalkeeper_min_gap_m: 5.0
+    goalkeeper_min_gap_fraction: 0.12
+    goalkeeper_search_depth: 2
+
+    # Which side is attacking comes from the ball, not from the kits.
+    # Measured in player-heights so it holds at any camera zoom.
+    ball_max_distance_boxes: 1.5
+    ball_ambiguous_ratio: 1.25
+
+    persist_colors_across_frames: true
+
 runtime:
   device: "cuda"          # cuda | cpu — "cuda" means prefer GPU, auto-fallback to CPU if unavailable
   inference_scheduler:

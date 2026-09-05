@@ -75,6 +75,7 @@ class ModelRegistry:
         self._tracker = None
         self._ball_tracker = None
         self._spotter = None
+        self._pose_estimator = None
         self._state = RegistryState()
         self._resolved_device: str | None = None
 
@@ -110,6 +111,9 @@ class ModelRegistry:
         detector_ok = self._load_detector()
         self._load_trackers()
         spotter_ok = self._load_spotter()
+        # Offside-only (M2.2). Failure here must never take down the M1 loop,
+        # so its result deliberately does not feed the readiness decision.
+        self._load_pose_estimator()
 
         if not detector_ok:
             self._state.status = ModelStatus.UNAVAILABLE
@@ -177,6 +181,69 @@ class ModelRegistry:
             return FixtureColorDetector(confidence_threshold=cfg.confidence_threshold)
 
         raise ModelLoadError(f"Unknown detector provider: '{cfg.provider}'")
+
+    def _load_pose_estimator(self) -> bool:
+        """Load the offside body-point model (M2.2), if it is switched on.
+
+        Unlike the detector and spotter, this one is optional by design: it
+        serves offside decision support only. A missing checkpoint leaves
+        offside body points unavailable and says so, while every M1 feature —
+        live preview, triggered analysis, candidate review — keeps working.
+        """
+        cfg = self._settings.offside.body_keypoints
+        if not cfg.enabled:
+            logger.info("pose_estimator_disabled", component="pose_estimator")
+            return False
+
+        if cfg.provider != "yolo_pose":
+            self._state.warnings.append(
+                f"Unknown pose provider '{cfg.provider}' — offside body points "
+                "are unavailable."
+            )
+            return False
+
+        from offside.body_keypoints.estimator import YoloPoseEstimator
+
+        estimator = YoloPoseEstimator(
+            checkpoint=cfg.checkpoint,
+            device=self._resolve_device(),
+            crop_imgsz=cfg.crop_imgsz,
+            keypoint_confidence_threshold=cfg.keypoint_confidence_threshold,
+            person_confidence_threshold=cfg.person_confidence_threshold,
+            match_iou=cfg.match_iou,
+            crop_padding_x=cfg.crop_padding_x,
+            crop_padding_y=cfg.crop_padding_y,
+            min_box_height_px=cfg.min_box_height_px,
+            knee_projection_penalty=cfg.knee_projection_penalty,
+            bbox_fallback_penalty=cfg.bbox_fallback_penalty,
+            max_players_per_frame=cfg.max_players_per_frame,
+            batch_size=cfg.batch_size,
+        )
+
+        try:
+            estimator.load()
+            estimator.warmup()
+        except ModelLoadError as exc:
+            logger.warning(
+                "pose_estimator_unavailable",
+                component="pose_estimator",
+                error=str(exc),
+            )
+            self._state.warnings.append(
+                "Offside body-point estimation is unavailable — the pose model "
+                f"could not be loaded ({exc})."
+            )
+            return False
+
+        self._pose_estimator = estimator
+        self._state.models["pose_estimator"] = ModelInfo(
+            name=estimator.model_name,
+            version=estimator.model_version,
+            provider=cfg.provider,
+            checkpoint=cfg.checkpoint,
+            sha256=_sha256_of(cfg.checkpoint),
+        )
+        return True
 
     def _load_trackers(self) -> None:
         from vision.tracking.ball_tracker import BallTracker
@@ -318,6 +385,13 @@ class ModelRegistry:
 
     def get_action_spotter(self):
         return self._spotter
+
+    def get_pose_estimator(self):
+        """The M2.2 body-point model, or None when it is off/unavailable.
+
+        Callers must handle None rather than assume offside support exists.
+        """
+        return self._pose_estimator
 
 
 def _sha256_of(path: str | None) -> str | None:

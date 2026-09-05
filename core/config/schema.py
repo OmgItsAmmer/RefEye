@@ -212,6 +212,219 @@ class AIConfig(StrictModel):
 
 
 # --------------------------------------------------------------------------
+# offside (Milestone 2)
+# --------------------------------------------------------------------------
+class BodyKeypointsConfig(StrictModel):
+    """Pose estimation for offside body points (M2.2).
+
+    Defaults are chosen so an M1-era config file still loads; they are
+    starting points measured on the reference clip, not validated accuracy
+    settings, and M2.8 is where they get tuned against more footage.
+    """
+
+    #: When false the pose model is never loaded and offside body points are
+    #: simply unavailable — M1's analysis loop is unaffected either way.
+    enabled: bool = True
+    provider: str = "yolo_pose"
+    checkpoint: str = "./models/pose/yolo11n-pose.pt"
+
+    #: Per-keypoint bar. Below this a body point is treated as not seen at
+    #: all, rather than quietly steering a line it cannot support.
+    keypoint_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    #: Bar for the pose model's own person box inside a crop.
+    person_confidence_threshold: float = Field(default=0.25, ge=0.0, le=1.0)
+    #: How much a pose's box must overlap the detection it was cropped for
+    #: before its skeleton is accepted — the neighbouring-player guard.
+    match_iou: float = Field(default=0.3, ge=0.0, le=1.0)
+
+    #: Crops are resized to this before inference. Broadcast players are
+    #: ~90px tall, so upscaling each crop is what makes keypoints possible.
+    crop_imgsz: int = Field(default=256, gt=0)
+    #: Padding around each player box, as a fraction of its size. Wider
+    #: horizontally: what escapes a box is a stretched leg, not headroom.
+    crop_padding_x: float = Field(default=0.25, ge=0.0, le=1.0)
+    crop_padding_y: float = Field(default=0.15, ge=0.0, le=1.0)
+    #: Players shorter than this in pixels are not posed at all; a skeleton
+    #: on a smudge looks like data while being noise.
+    min_box_height_px: float = Field(default=24.0, gt=0.0)
+
+    #: Confidence multipliers for the two fallback rungs of the ground-point
+    #: ladder (see offside/body_keypoints/ground_point.py). Both are < 1 so a
+    #: guessed foot position can never outrank a measured one.
+    knee_projection_penalty: float = Field(default=0.55, ge=0.0, le=1.0)
+    bbox_fallback_penalty: float = Field(default=0.3, ge=0.0, le=1.0)
+
+    max_players_per_frame: int = Field(default=30, gt=0)
+    batch_size: int = Field(default=32, gt=0)
+
+
+class PitchLineDetectionConfig(StrictModel):
+    """Classical detection of the painted markings (M2.1).
+
+    Every default here was measured against real broadcast footage, not
+    guessed — see offside/pitch_calibration/line_detection.py for what each
+    filter removes and what happens without it.
+    """
+
+    #: Grass hue window (OpenCV HSV, hue 0-180). Wide enough for floodlit
+    #: night grass through to daylight, narrow enough to exclude the crowd.
+    grass_hue_min: int = Field(default=30, ge=0, le=180)
+    grass_hue_max: int = Field(default=95, ge=0, le=180)
+    grass_min_saturation: int = Field(default=40, ge=0, le=255)
+
+    #: Brightness floor for paint. A saturation-based "white" test was tried
+    #: and discards most of the line: broadcast compression bleeds grass
+    #: colour into the paint.
+    line_min_brightness: int = Field(default=150, ge=0, le=255)
+    #: Top-hat structuring size: keeps bright things thinner than this and
+    #: rejects boards, sleeves and glare.
+    max_line_width_px: int = Field(default=15, gt=2)
+    tophat_threshold: int = Field(default=20, ge=0, le=255)
+    #: Player boxes are blanked before line finding — a white shirt is a thin
+    #: bright object on green, which is the definition a line detector uses.
+    exclude_box_margin: float = Field(default=0.15, ge=0.0, le=1.0)
+
+    min_line_length_px: int = Field(default=50, gt=0)
+    max_line_gap_px: int = Field(default=25, ge=0)
+    hough_threshold: int = Field(default=40, gt=0)
+    merge_angle_deg: float = Field(default=4.0, gt=0.0)
+    merge_distance_px: float = Field(default=14.0, gt=0.0)
+    max_lines: int = Field(default=40, gt=0)
+
+
+class PitchCalibrationConfig(StrictModel):
+    """Mapping the camera view onto the pitch (M2.1)."""
+
+    enabled: bool = True
+
+    #: Pitch size in metres. The Laws permit a range and grounds differ;
+    #: 105x68 is the FIFA/UEFA standard. Everything else (penalty area, goal
+    #: area, centre circle) is fixed by the Laws and derived in code.
+    pitch_length_m: float = Field(default=105.0, gt=0.0)
+    pitch_width_m: float = Field(default=68.0, gt=0.0)
+
+    #: A landmark further than this from where the other points imply it
+    #: should be is treated as a mismarked click.
+    max_reprojection_error_m: float = Field(default=2.0, gt=0.0)
+    #: Lines must agree within this angle to count as converging on the same
+    #: vanishing point. Judged by angle, not pixels — a vanishing point is
+    #: often thousands of pixels off-screen.
+    inlier_angle_deg: float = Field(default=2.5, gt=0.0)
+    min_family_support: int = Field(default=2, ge=2)
+    #: Below this many detected markings, automatic calibration reports
+    #: nothing rather than fitting to noise.
+    min_lines_for_auto: int = Field(default=4, ge=2)
+
+    line_detection: PitchLineDetectionConfig = Field(
+        default_factory=PitchLineDetectionConfig
+    )
+
+
+class TeamAssignmentConfig(StrictModel):
+    """Grouping players by kit, and finding the goalkeepers (M2.3).
+
+    Nothing here names a colour. Kit colours are discovered from the footage
+    at runtime — a configured "home team is red" would be worthless on the
+    next match (M2_Plan section 4). What is tunable is how much evidence is
+    demanded before an assignment is claimed as confident.
+
+    Colour distances are in CIELAB units (approximately dE76), where ~2.3 is
+    "a trained eye can just tell them apart" and ~50 is "obviously different
+    colours".
+    """
+
+    enabled: bool = True
+    provider: str = "jersey_color"
+
+    # -- where the shirt is sampled from ------------------------------------
+    #: Bar for a shoulder/hip keypoint before the torso quad is trusted. Lower
+    #: than the offside-measurement bar: a roughly-placed shoulder still
+    #: samples shirt, whereas a roughly-placed ankle moves an offside line.
+    torso_keypoint_confidence: float = Field(default=0.4, ge=0.0, le=1.0)
+    #: Shrink the torso quad toward its centre; its border is where the shirt
+    #: meets sleeve, neck, shorts and background.
+    torso_shrink: float = Field(default=0.7, gt=0.0, le=1.0)
+    #: Fallback band inside the player box, used when the torso keypoints are
+    #: missing. A player who cannot be posed still needs a team, or the
+    #: defender ranking loses them.
+    fallback_top_fraction: float = Field(default=0.18, ge=0.0, le=1.0)
+    fallback_bottom_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
+    fallback_width_fraction: float = Field(default=0.5, gt=0.0, le=1.0)
+
+    #: Bare arms and necks look the same on both teams, so they are removed
+    #: along with grass. Dark pixels are deliberately kept — excluding them
+    #: would make black and navy kits unmeasurable.
+    exclude_skin: bool = True
+    min_sample_pixels: int = Field(default=20, gt=0)
+    #: Below this surviving fraction of the sampled patch, the colour is
+    #: reported with reduced confidence rather than as a clean measurement.
+    min_kept_fraction: float = Field(default=0.35, gt=0.0, le=1.0)
+    min_sample_confidence: float = Field(default=0.25, ge=0.0, le=1.0)
+
+    # -- fitting the two kits ------------------------------------------------
+    min_players_for_clustering: int = Field(default=6, ge=2)
+    #: Player count at which the fit is considered well-evidenced; fewer
+    #: caps the stage's confidence proportionally.
+    confident_player_count: int = Field(default=10, gt=0)
+    #: Outlier cut = median residual + this many MADs, floored at
+    #: `min_outlier_distance`. Derived from the footage, because how tight a
+    #: kit measures depends on the broadcast, not on anything knowable here.
+    outlier_mad_scale: float = Field(default=3.0, gt=0.0)
+    min_outlier_distance: float = Field(default=18.0, gt=0.0)
+    #: A group this small is not a team — it is a goalkeeper, an official, or
+    #: a badly measured shirt. Distance alone never catches them (a group of
+    #: one sits exactly on its own centre), and while one survives it holds a
+    #: team slot hostage and forces the two real kits to share the other.
+    min_cluster_fraction: float = Field(default=0.2, gt=0.0, le=0.5)
+    min_cluster_size: int = Field(default=3, ge=1)
+    #: Removing outliers can expose more of them, so the fit is repeated.
+    max_trim_rounds: int = Field(default=3, ge=0)
+    #: Separation between the two kits at which colour alone is trustworthy.
+    good_separation: float = Field(default=25.0, gt=0.0)
+    #: ...and how many times the within-kit spread that separation must beat.
+    min_separation_ratio: float = Field(default=2.0, gt=0.0)
+    max_iterations: int = Field(default=25, gt=0)
+    #: How much nearer a player must be to one kit than the other before the
+    #: assignment counts as certain. Small margins are what "these two kits
+    #: look alike" actually looks like in the data.
+    assignment_margin: float = Field(default=6.0, gt=0.0)
+
+    # -- goalkeepers ---------------------------------------------------------
+    #: A goalkeeper is an odd kit that also stands alone behind everyone. With
+    #: metric calibration the gap is in metres; without it, a fraction of the
+    #: spread of all players along the goal-to-goal axis.
+    goalkeeper_min_gap_m: float = Field(default=5.0, gt=0.0)
+    goalkeeper_min_gap_fraction: float = Field(default=0.12, gt=0.0, le=1.0)
+    #: How many players deep to look at each end — a defender dropping
+    #: goal-side of the keeper is ordinary football, not a failure.
+    goalkeeper_search_depth: int = Field(default=2, ge=1)
+
+    # -- which side is attacking --------------------------------------------
+    #: Distance from the ball to the nearest player, in multiples of that
+    #: player's box height, before possession is claimed. Scale-free on
+    #: purpose: players are far smaller in a wide shot than a tight one.
+    ball_max_distance_boxes: float = Field(default=1.5, gt=0.0)
+    #: If an opponent is within this multiple of the nearest player's
+    #: distance, possession is reported as contested.
+    ball_ambiguous_ratio: float = Field(default=1.25, ge=1.0)
+
+    #: Keep `team_a` meaning the same kit between frames. Clustering has no
+    #: memory, so without this the labels can flip from frame to frame.
+    persist_colors_across_frames: bool = True
+
+
+class OffsideConfig(StrictModel):
+    """Milestone 2 settings. Later phases (decision support) add their
+    sections alongside these."""
+
+    body_keypoints: BodyKeypointsConfig = Field(default_factory=BodyKeypointsConfig)
+    pitch_calibration: PitchCalibrationConfig = Field(
+        default_factory=PitchCalibrationConfig
+    )
+    team_assignment: TeamAssignmentConfig = Field(default_factory=TeamAssignmentConfig)
+
+
+# --------------------------------------------------------------------------
 # runtime
 # --------------------------------------------------------------------------
 class InferenceSchedulerConfig(StrictModel):
@@ -249,6 +462,8 @@ class AppSettings(StrictModel):
     buffer: BufferConfig
     shortcuts: ShortcutsConfig
     ai: AIConfig
+    #: Defaulted so a config written before Milestone 2 still loads.
+    offside: OffsideConfig = Field(default_factory=OffsideConfig)
     runtime: RuntimeConfig
     logging: LoggingConfig
     persistence: PersistenceConfig
