@@ -17,7 +17,19 @@ from offside.body_keypoints.keypoints import (
     SOURCE_KNEE_PROJECTED,
     PlayerPose,
 )
+from offside.offside_line.rendering import ascii_safe, draw_offside_overlay
 from offside.pitch_calibration.calibrator import PitchCalibration
+
+# Re-exported at module level for callers that reach these through
+# `overlays.<name>` (app.py, and the tests that drive it) rather than
+# importing them directly — hence the noqa: ruff can't see that usage.
+from offside.pitch_calibration.rendering import (  # noqa: F401
+    canvas_to_pitch,
+    draw_marked_landmarks,
+    render_top_down,
+    team_swatch,
+    top_down_transform,
+)
 from offside.team_assignment.teams import PlayerRole, PlayerTeam, TeamAssignment
 
 # BGR, since these are drawn with OpenCV.
@@ -28,6 +40,18 @@ NEUTRAL = (170, 170, 170)
 BALL_COLOR = (0, 230, 255)
 LINE_FAMILY_COLORS = [(255, 160, 40), (200, 80, 255), (80, 230, 230), (160, 160, 160)]
 MARKED = (255, 255, 255)
+#: The player picked in the team grid, so the two halves of the window agree.
+SELECTED = (255, 154, 76)
+
+#: Identity states (M2.4), on the same measured/inferred/guessed scale: a
+#: confirmed identity is a measurement, a recovered one is an inference, and a
+#: contested one is a guess the operator is being warned not to rely on.
+IDENTITY_COLORS = {
+    "confirmed": MEASURED,
+    "recovered": INFERRED,
+    "tentative": (200, 200, 90),
+    "contested": GUESSED,
+}
 
 #: COCO skeleton, by keypoint index.
 SKELETON = [
@@ -105,8 +129,16 @@ def draw_team_assignment(
         if player.index >= len(poses):
             continue
         x1, y1, x2, y2 = (int(v) for v in poses[player.index].bbox_xyxy)
-        swatch = _team_swatch(teams, player)
+        swatch = team_swatch(teams, player)
         cv2.rectangle(image, (x1, y1), (x2, y2), swatch, 2)
+
+        if player.needs_confirmation:
+            # The operator's whole job on this stage is "look at the flagged
+            # ones". A dashed white surround says which without hiding the
+            # measured kit colour underneath it.
+            for offset in range(x1, x2, 8):
+                cv2.line(image, (offset, y1 - 3), (min(offset + 4, x2), y1 - 3), MARKED, 1)
+                cv2.line(image, (offset, y2 + 3), (min(offset + 4, x2), y2 + 3), MARKED, 1)
 
         label = _team_label(player)
         # The label follows the house rule (green measured, orange inferred,
@@ -123,7 +155,7 @@ def draw_team_assignment(
 
         cv2.putText(
             image,
-            label,
+            ascii_safe(label),
             (x1, max(10, y1 - 4)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.42,
@@ -143,15 +175,78 @@ def _team_label(player: PlayerTeam) -> str:
     return base + ("*" if player.is_operator_set else "")
 
 
-def _team_swatch(teams: TeamAssignment, player: PlayerTeam) -> tuple[int, int, int]:
-    if player.team_id is None or teams.color_model is None:
-        return NEUTRAL
-    swatch = teams.color_model.swatches.get(player.team_id, NEUTRAL)
-    # Very dark kits would draw an invisible box on a dark frame; lift them
-    # just enough to be seen without pretending the kit is a lighter colour.
-    if max(swatch) < 70:
-        return tuple(int(min(255, v + 70)) for v in swatch)
-    return tuple(int(v) for v in swatch)
+def draw_identities(image: np.ndarray, poses: list[PlayerPose], identities) -> None:
+    """Each player's id, how well they are being followed, and where they came from.
+
+    The trail is the point of this overlay. A confidence number saying "this
+    identity is solid" is an assertion; a path that visibly follows one player
+    across the frame is evidence, and a path that jumps sideways onto somebody
+    else is the swap this phase exists to prevent, made visible.
+    """
+    if identities is None:
+        return
+
+    for identity in identities.identities:
+        if identity.index >= len(poses):
+            continue
+        colour = IDENTITY_COLORS.get(identity.state.value, NEUTRAL)
+
+        points = identity.trail[-24:]
+        for start, end in zip(points, points[1:]):
+            cv2.line(
+                image,
+                (int(start[0]), int(start[1])),
+                (int(end[0]), int(end[1])),
+                colour,
+                1,
+                cv2.LINE_AA,
+            )
+
+        x1, y1, x2, y2 = (int(v) for v in poses[identity.index].bbox_xyxy)
+        cv2.putText(
+            image,
+            identity.track_id,
+            (x1, min(image.shape[0] - 4, y2 + 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            colour,
+            1,
+            cv2.LINE_AA,
+        )
+
+
+def highlight_player(image: np.ndarray, poses: list[PlayerPose], index: int | None) -> None:
+    """Ring the player selected in the team grid.
+
+    The link between the two halves of the window: picking a swatch on the
+    right must point at somebody on the left, or the operator is being asked
+    to judge a colour with no idea whose it is.
+    """
+    if index is None or not (0 <= index < len(poses)):
+        return
+    x1, y1, x2, y2 = (int(v) for v in poses[index].bbox_xyxy)
+    cv2.rectangle(image, (x1 - 4, y1 - 4), (x2 + 4, y2 + 4), SELECTED, 2)
+    cv2.putText(
+        image,
+        f"#{index}",
+        (x1 - 4, max(12, y1 - 10)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        SELECTED,
+        1,
+        cv2.LINE_AA,
+    )
+
+
+def draw_offside_line(image: np.ndarray, decision, explanation=None) -> None:
+    """The line, the two players it is measured between, and the verdict.
+
+    The drawing itself lives in `offside/offside_line/rendering.py` so that the
+    inspector and the operator's review screen cannot drift apart: an overlay
+    that disagreed between the debug view and the shipped one would be worse
+    than no overlay at all.
+    """
+    draw_offside_overlay(image, decision, explanation)
 
 
 def draw_line_mask(image: np.ndarray, mask: np.ndarray) -> None:
@@ -221,118 +316,3 @@ def draw_offside_direction(
             1,
             cv2.LINE_AA,
         )
-
-
-def draw_marked_landmarks(image: np.ndarray, calibration_points) -> None:
-    for point in calibration_points:
-        x, y = int(point.image_xy[0]), int(point.image_xy[1])
-        cv2.drawMarker(image, (x, y), MARKED, cv2.MARKER_TILTED_CROSS, 16, 2)
-        cv2.circle(image, (x, y), 9, MARKED, 1)
-        if point.landmark:
-            cv2.putText(
-                image,
-                point.landmark.replace("_", " "),
-                (x + 12, y - 8),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                MARKED,
-                1,
-                cv2.LINE_AA,
-            )
-
-
-def render_top_down(
-    pitch,
-    calibration: PitchCalibration | None,
-    poses: list[PlayerPose],
-    teams: TeamAssignment | None = None,
-    size: tuple[int, int] = (760, 520),
-) -> np.ndarray:
-    """The pitch from above, with players projected onto it.
-
-    Only possible with a metric calibration — with anything less this returns
-    a panel saying so, rather than an empty pitch that looks like a pitch with
-    nobody on it.
-    """
-    width, height = size
-    canvas = np.full((height, width, 3), 26, dtype=np.uint8)
-
-    margin = 40
-    scale = min(
-        (width - 2 * margin) / (pitch.length + 4),
-        (height - 2 * margin) / (pitch.width + 4),
-    )
-    offset_x = (width - pitch.length * scale) / 2
-    offset_y = (height - pitch.width * scale) / 2
-
-    def to_canvas(point) -> tuple[int, int]:
-        return (int(offset_x + point[0] * scale), int(offset_y + point[1] * scale))
-
-    for start, end in pitch.lines():
-        cv2.line(canvas, to_canvas(start), to_canvas(end), (70, 110, 70), 1, cv2.LINE_AA)
-
-    if calibration is None or not calibration.is_metric:
-        cv2.putText(
-            canvas,
-            "Metric calibration required",
-            (margin, height // 2 - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (150, 150, 150),
-            1,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            canvas,
-            "Mark 4+ pitch landmarks to place players here",
-            (margin, height // 2 + 14),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (110, 110, 110),
-            1,
-            cv2.LINE_AA,
-        )
-        return canvas
-
-    ground_points = [pose.ground_point for pose in poses]
-    if ground_points:
-        projected = calibration.to_pitch([g.xy for g in ground_points])
-        for index, (ground, position) in enumerate(zip(ground_points, projected)):
-            if not np.all(np.isfinite(position)):
-                continue
-            # Off-pitch projections are shown, dimmed, rather than hidden:
-            # they are the signature of a bad calibration or a crowd
-            # detection, and hiding them hides the problem.
-            on_pitch = pitch.contains(tuple(position), margin=5.0)
-            certainty = (
-                (MEASURED if ground.is_measured else GUESSED) if on_pitch else (70, 70, 70)
-            )
-            player = teams.by_index(index) if teams is not None else None
-
-            if player is None:
-                cv2.circle(canvas, to_canvas(position), 5, certainty, -1 if on_pitch else 1)
-                continue
-
-            # Two things at once, deliberately: the fill says which team, the
-            # ring says how sure the *foot position* is. Collapsing them into
-            # one colour would hide whichever failure was not being looked for.
-            fill = _team_swatch(teams, player) if on_pitch else (70, 70, 70)
-            centre = to_canvas(position)
-            cv2.circle(canvas, centre, 5, fill, -1)
-            cv2.circle(canvas, centre, 6, certainty, 1)
-            if player.role is PlayerRole.GOALKEEPER:
-                cv2.circle(canvas, centre, 9, MARKED, 1)
-
-    if teams is not None and teams.attacking_team_id is not None:
-        cv2.putText(
-            canvas,
-            f"attacking: team {teams.attacking_team_id[-1].upper()}",
-            (margin, height - 12),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (170, 170, 170),
-            1,
-            cv2.LINE_AA,
-        )
-
-    return canvas

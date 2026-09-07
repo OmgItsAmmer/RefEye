@@ -61,7 +61,12 @@ from core.errors.exceptions import ConfigurationError
 from observability.logging.setup import get_logger
 from offside.body_keypoints.keypoints import PlayerPose
 from offside.team_assignment.clustering import fit_team_colors
-from offside.team_assignment.jersey_color import JerseyColorExtractor, TeamFeatureExtractor
+from offside.team_assignment.tracks import TrackRegistry
+from offside.team_assignment.jersey_color import (
+    JerseyColorExtractor,
+    TeamFeatureExtractor,
+    unmeasured,
+)
 from offside.team_assignment.teams import (
     SOURCE_KIT_COLOUR,
     SOURCE_OPERATOR,
@@ -228,8 +233,22 @@ class TeamAssigner:
         ball_max_distance_boxes: float = 1.5,
         ball_ambiguous_ratio: float = 1.25,
         persist_colors_across_frames: bool = True,
+        track_iou_threshold: float = 0.35,
+        track_max_age_frames: int = 12,
+        track_max_samples: int = 30,
+        vote_share_to_confirm: float = 0.75,
+        confident_player_confidence: float = 0.6,
+        min_frames_to_trust: int = 3,
     ):
         self._extractor = extractor or JerseyColorExtractor()
+        self._tracks = TrackRegistry(
+            iou_threshold=track_iou_threshold,
+            max_age_frames=track_max_age_frames,
+            max_samples=track_max_samples,
+        )
+        self._vote_share_to_confirm = vote_share_to_confirm
+        self._confident_player_confidence = confident_player_confidence
+        self._min_frames_to_trust = min_frames_to_trust
         self._fit_kwargs = {
             "min_samples": min_samples,
             "confident_samples": confident_samples,
@@ -285,6 +304,13 @@ class TeamAssigner:
             exclude_skin=config.exclude_skin,
             min_sample_pixels=config.min_sample_pixels,
             min_kept_fraction=config.min_kept_fraction,
+            normalize_illumination=config.normalize_illumination,
+            illumination_max_gain=config.illumination_max_gain,
+            pattern_collapse_distance=config.pattern_collapse_distance,
+            pattern_lightness_distance=config.pattern_lightness_distance,
+            pattern_min_share=config.pattern_min_share,
+            max_signature_pixels=config.max_signature_pixels,
+            lightness_weight=config.lightness_weight,
         )
         return cls(
             extractor=extractor,
@@ -306,11 +332,30 @@ class TeamAssigner:
             ball_max_distance_boxes=config.ball_max_distance_boxes,
             ball_ambiguous_ratio=config.ball_ambiguous_ratio,
             persist_colors_across_frames=config.persist_colors_across_frames,
+            track_iou_threshold=config.track_iou_threshold,
+            track_max_age_frames=config.track_max_age_frames,
+            track_max_samples=config.track_max_samples,
+            vote_share_to_confirm=config.vote_share_to_confirm,
+            confident_player_confidence=config.confident_player_confidence,
+            min_frames_to_trust=config.min_frames_to_trust,
         )
 
     def reset(self) -> None:
-        """Forget the fitted kit colours — call on a camera cut or a new clip."""
+        """Forget the kit colours and the identities — on a new clip, where
+        everything measured so far describes a different scene."""
         self._last_model = None
+        self._tracks.reset()
+
+    def reset_identities(self) -> None:
+        """Forget who is who, but keep the kits — the camera-cut case.
+
+        A cut ends every identity (M2.4), but it does not change what the two
+        teams are wearing: it is the same match. Throwing the colour model
+        away here would discard good evidence and let the team labels flip
+        from one shot to the next, which is exactly the flicker
+        `TeamColorModel.aligned_to` exists to prevent.
+        """
+        self._tracks.reset()
 
     # -- main entry point ---------------------------------------------------
 
@@ -321,12 +366,34 @@ class TeamAssigner:
         *,
         calibration=None,
         ball_xy: Point | None = None,
+        passer_xy: Point | None = None,
+        frame_id: int | None = None,
     ) -> TeamAssignment:
+        """Classify the players in one frame, using every frame seen so far.
+
+        `passer_xy` is the operator-confirmed player who played the ball at
+        the contact frame. When it is given it decides the attacking side
+        outright — the operator is already looking at that exact frame in the
+        review panel, so this is the one piece of the puzzle that can be had
+        for free and be right essentially always. `ball_xy` is the automatic
+        fallback for when nobody has confirmed anything.
+        """
         if not poses:
             return TeamAssignment(reasons=["no players to assign"])
 
-        colors = [self._extractor.extract(image, pose) for pose in poses]
-        model, fit_reasons = fit_team_colors(colors, **self._fit_kwargs)
+        if frame_id is None:
+            frame_id = poses[0].frame_id
+        track_ids = self._tracks.update(frame_id, poses)
+
+        for track_id, pose in zip(track_ids, poses):
+            self._tracks.record_color(track_id, self._extractor.extract(image, pose))
+
+        # Fit on one pooled colour per *player*, not one per frame-sample: a
+        # player who happens to be measured twice must not count twice in the
+        # kit estimate, and their pooled colour is a better sample than any
+        # single frame's.
+        pooled = [self._pooled_color(track_id) for track_id in track_ids]
+        model, fit_reasons = fit_team_colors(pooled, **self._fit_kwargs)
 
         assignment = TeamAssignment(color_model=model, reasons=list(fit_reasons))
 
@@ -337,8 +404,11 @@ class TeamAssigner:
             )
             assignment.players = [
                 _unassigned_player(index, pose, colour, "no team colours were measured")
-                for index, (pose, colour) in enumerate(zip(poses, colors))
+                for index, (pose, colour) in enumerate(zip(poses, pooled))
             ]
+            for player in assignment.players:
+                player.track_id = track_ids[player.index]
+                player.needs_confirmation = True
             self._apply_overrides(assignment, poses)
             return assignment
 
@@ -348,8 +418,8 @@ class TeamAssigner:
         self._last_model = model
 
         assignment.players = [
-            self._classify(index, pose, colour, model)
-            for index, (pose, colour) in enumerate(zip(poses, colors))
+            self._classify(index, pose, colour, model, track_ids[index])
+            for index, (pose, colour) in enumerate(zip(poses, pooled))
         ]
 
         axis = self._depth_axis(image, poses, calibration)
@@ -357,7 +427,7 @@ class TeamAssigner:
             player.depth = axis.values[player.index]
 
         self._identify_goalkeepers(assignment, axis, calibration)
-        self._name_attacking_team(assignment, poses, ball_xy)
+        self._name_attacking_team(assignment, poses, ball_xy, passer_xy)
         self._apply_overrides(assignment, poses)
         self._score(assignment, model)
 
@@ -373,11 +443,24 @@ class TeamAssigner:
 
     # -- steps --------------------------------------------------------------
 
+    def _pooled_color(self, track_id: str) -> JerseyColor:
+        track = self._tracks.get(track_id)
+        pooled = track.pooled_color() if track is not None else None
+        return pooled if pooled is not None else unmeasured("no shirt colour measured yet")
+
     def _classify(
-        self, index: int, pose: PlayerPose, colour: JerseyColor, model: TeamColorModel
+        self,
+        index: int,
+        pose: PlayerPose,
+        colour: JerseyColor,
+        model: TeamColorModel,
+        track_id: str,
     ) -> PlayerTeam:
         if not colour.is_usable:
-            return _unassigned_player(index, pose, colour, colour.reason)
+            player = _unassigned_player(index, pose, colour, colour.reason)
+            player.track_id = track_id
+            player.needs_confirmation = True
+            return player
 
         team_id, distance, margin = model.classify(colour)
 
@@ -395,23 +478,50 @@ class TeamAssigner:
                     "official, or a colour that could not be measured cleanly"
                 ),
                 anchor_xy=_anchor_of(pose),
-                track_id=pose.track_id,
+                track_id=track_id,
                 color=colour,
                 distance=distance,
                 margin=margin,
+                needs_confirmation=True,
             )
 
-        # A player sitting between the two kits is reported as such rather
-        # than as a confident member of the nearer one: on similar kits this
-        # margin is the difference between a usable call and a coin flip.
+        # This frame's opinion is a vote, not a verdict. What the player is
+        # reported as is what every frame of them so far agrees on — the
+        # single largest accuracy win available here, because it turns one
+        # blurred or half-occluded frame from a wrong answer into a minority
+        # vote that loses.
         certainty = min(1.0, margin / max(1e-6, self._assignment_margin))
-        confidence = float(colour.confidence * max(0.0, certainty))
+        frame_confidence = float(colour.confidence * max(0.0, certainty))
+        self._tracks.record_vote(track_id, team_id, frame_confidence)
+
+        track = self._tracks.get(track_id)
+        voted_team, share = track.leading_vote() if track is not None else (None, 0.0)
+        frames_pooled = colour.sample_count
+
+        if voted_team is not None and voted_team != team_id:
+            team_id, distance, margin = (
+                voted_team,
+                *_distance_and_margin(model, colour, voted_team),
+            )
+
+        confidence = float(min(1.0, frame_confidence * (0.5 + 0.5 * share)))
         reason = (
             f"shirt colour is {distance:.0f} from this team's kit and "
             f"{distance + margin:.0f} from the other"
         )
+        if frames_pooled > 1:
+            reason += (
+                f"; agreed by {share * 100:.0f}% of the evidence over "
+                f"{frames_pooled} frame(s)"
+            )
         if certainty < 1.0:
             reason += " — close to the boundary between the two kits"
+
+        needs_confirmation = (
+            confidence < self._confident_player_confidence
+            or share < self._vote_share_to_confirm
+            or frames_pooled < self._min_frames_to_trust
+        )
 
         return PlayerTeam(
             index=index,
@@ -421,10 +531,13 @@ class TeamAssigner:
             source=SOURCE_KIT_COLOUR,
             reason=reason,
             anchor_xy=_anchor_of(pose),
-            track_id=pose.track_id,
+            track_id=track_id,
             color=colour,
             distance=distance,
             margin=margin,
+            vote_share=share,
+            frames_pooled=frames_pooled,
+            needs_confirmation=needs_confirmation,
         )
 
     def _depth_axis(self, image, poses: list[PlayerPose], calibration) -> _DepthAxis:
@@ -508,6 +621,10 @@ class TeamAssigner:
                 f"wears neither team's kit and stands {gap:.0f}{axis.unit} beyond "
                 f"every other player at the {end} end of the pitch"
             )
+            # A keeper is identified, but not placed on a team — that takes
+            # either the operator or M2.5's attack direction — so the operator
+            # is still asked before this feeds a verdict.
+            player.needs_confirmation = True
 
     def _goalkeeper_at_end(
         self, ordered: list[PlayerTeam], gap_needed: float
@@ -528,8 +645,30 @@ class TeamAssigner:
         return None
 
     def _name_attacking_team(
-        self, assignment: TeamAssignment, poses: list[PlayerPose], ball_xy: Point | None
+        self,
+        assignment: TeamAssignment,
+        poses: list[PlayerPose],
+        ball_xy: Point | None,
+        passer_xy: Point | None = None,
     ) -> None:
+        if passer_xy is not None:
+            # The operator has already identified the player who played the
+            # ball — they confirmed this exact frame in the review panel. That
+            # is a far stronger signal than "closest to a ball detection", and
+            # it costs nothing, so it wins outright when present.
+            passer = self._nearest_player(assignment, poses, passer_xy)
+            if passer is not None and passer.team_id is not None:
+                assignment.attacking_team_id = passer.team_id
+                assignment.reasons.append(
+                    "attacking side taken from the confirmed player who played the ball"
+                )
+                return
+            assignment.warnings.append(
+                "the player who played the ball could not be placed on either "
+                "team, so which side is attacking is unknown"
+            )
+            return
+
         if ball_xy is None:
             assignment.warnings.append(
                 "no ball was detected on this frame, so which side is attacking is "
@@ -554,12 +693,29 @@ class TeamAssigner:
             )
             return
 
-        if nearest.team_id is None:
+        # The single nearest detection is not always a player whose kit could
+        # be read — a referee, a ball boy, or a player cropped too tightly for
+        # M2.3 to sample a shirt colour from all land in `assignment.players`
+        # with `team_id=None`. Giving up the instant that happens throws away
+        # a signal that is often still there one rank down: on a corner or a
+        # loose ball, two or three real players are typically within a few
+        # pixels of each other near the ball, and the nearest *unteamed*
+        # detection standing slightly closer must not veto all of them.
+        candidates = [
+            (distance, player)
+            for distance, player in distances
+            if distance <= self._ball_max_distance_boxes
+        ]
+        teamed = next(
+            ((d, p) for d, p in candidates if p.team_id is not None), None
+        )
+        if teamed is None:
             assignment.warnings.append(
-                "the player nearest the ball could not be put on either team, so "
-                "which side is attacking is unknown"
+                "the player(s) nearest the ball could not be put on either team, "
+                "so which side is attacking is unknown"
             )
             return
+        nearest_distance, nearest = teamed
 
         assignment.attacking_team_id = nearest.team_id
         assignment.reasons.append(
@@ -569,8 +725,9 @@ class TeamAssigner:
 
         contested = [
             player
-            for distance, player in distances[1:]
-            if player.team_id not in (None, nearest.team_id)
+            for distance, player in distances
+            if player is not nearest
+            and player.team_id not in (None, nearest.team_id)
             and distance <= nearest_distance * self._ball_ambiguous_ratio
         ]
         if contested:
@@ -578,6 +735,19 @@ class TeamAssigner:
                 "players from both sides are equally close to the ball — the "
                 "attacking side may be the other one; confirm before trusting a call"
             )
+
+    def _nearest_player(
+        self, assignment: TeamAssignment, poses: list[PlayerPose], point: Point
+    ) -> PlayerTeam | None:
+        best, best_distance = None, float("inf")
+        for player in assignment.players:
+            pose = poses[player.index]
+            distance = min(
+                _distance(pose.ground_point.xy, point), _distance(player.anchor_xy, point)
+            )
+            if distance < best_distance:
+                best, best_distance = player, distance
+        return best
 
     def _apply_overrides(self, assignment: TeamAssignment, poses: list[PlayerPose]) -> None:
         overrides = self.overrides
@@ -613,6 +783,9 @@ class TeamAssigner:
             player.source = SOURCE_OPERATOR
             player.confidence = 1.0
             player.reason = f"set by the operator: {pin.describe()}"
+            # Confirmed by a human: this is the one thing in the pipeline that
+            # never needs asking about again.
+            player.needs_confirmation = False
 
         if overrides.attacking_team_id is not None:
             assignment.attacking_team_id = overrides.attacking_team_id
@@ -647,6 +820,16 @@ class TeamAssigner:
                 "team — the defender ranking may be missing someone"
             )
 
+        # The point of this list is that everything *not* on it is safe to act
+        # on without asking. Residual error is meant to arrive here as a
+        # question, not as a wrong answer presented confidently.
+        unsure = assignment.needs_confirmation()
+        if unsure:
+            assignment.reasons.append(
+                f"{len(unsure)} player(s) need a quick confirmation; the other "
+                f"{len(assignment.players) - len(unsure)} are settled"
+            )
+
 
 # -- helpers ----------------------------------------------------------------
 
@@ -665,6 +848,20 @@ def _unassigned_player(
         track_id=pose.track_id,
         color=colour if colour.is_usable else None,
     )
+
+
+def _distance_and_margin(
+    model: TeamColorModel, colour: JerseyColor, team_id: str
+) -> tuple[float, float]:
+    """Distance to a named team, and how much closer that team is than the other."""
+    vector = colour.as_array()
+    distances = {
+        other: float(np.linalg.norm(vector - model.centroid(other)))
+        for other in model.centroids
+    }
+    mine = distances[team_id]
+    theirs = min(value for key, value in distances.items() if key != team_id)
+    return mine, theirs - mine
 
 
 def _anchor_of(pose: PlayerPose) -> Point:

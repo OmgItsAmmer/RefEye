@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -42,6 +43,9 @@ from apps.desktop.ui.widgets.common import (
     label,
 )
 from apps.desktop.ui.widgets.loaders import CardSwapLoader
+from apps.desktop.ui.widgets.offside_progress import OffsideProgressPanel
+from apps.desktop.ui.widgets.offside_review import OffsideReviewPanel
+from apps.desktop.ui.widgets.pitch_map import PitchMapPanel
 from apps.desktop.ui.widgets.recent_clip_preview import RecentClipPreview
 from video.frame_access.video_service import VideoService
 from vision.features.feature_cache import FeatureCache
@@ -70,20 +74,61 @@ class AnalyzerScreen(QWidget):
     ):
         super().__init__(parent)
         self._feature_cache = feature_cache
+        self._offside_decision = None
 
         root = QHBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(16)
 
         root.addWidget(self._build_analysis_panel(analyze_shortcut_label), stretch=7)
-
-        right = QVBoxLayout()
-        right.setSpacing(16)
-        right.addWidget(self._build_top_right_stack(video_service, recent_window_seconds), stretch=1)
-        right.addWidget(self._build_alternatives_panel(), stretch=1)
-        root.addLayout(right, stretch=3)
+        root.addWidget(self._build_right_column(video_service, recent_window_seconds), stretch=3)
 
     # -- left: analysis workspace --------------------------------------
+
+    def _build_right_column(
+        self, video_service: VideoService, recent_window_seconds: int
+    ) -> QScrollArea:
+        """The camera/preview slot, alternatives, and the offside panel,
+        inside a scroll area rather than three fixed-stretch panes.
+
+        Three growing panels stacked with fixed VBox stretch factors and no
+        escape hatch is what "small screen" actually breaks: on a window at
+        or near the app's own minimum size, three panels compressed to fit
+        whatever space is left is indistinguishable from labels silently
+        losing their text and buttons losing their padding. A `QScrollArea`
+        gives each panel its natural size and lets the *column* scroll
+        instead of squeezing its contents — the operator loses nothing, they
+        just occasionally scroll for it.
+        """
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        layout.addWidget(self._build_top_right_stack(video_service, recent_window_seconds))
+        layout.addWidget(self._build_alternatives_panel())
+        # M2.7: the offside call sits beneath the alternatives, so the verdict
+        # and its caveats are on screen at the same time as the frame it is
+        # about — an operator should never have to change view to find out
+        # what the tool was unsure about.
+        layout.addWidget(self._build_offside_panel())
+        # The flattened pitch, with whatever marks calibrated it — the same
+        # view the Pipeline Inspector shows, moved into the product so the
+        # operator does not need a separate debug tool to see what the
+        # calibration actually produced.
+        layout.addWidget(self._build_pitch_panel())
+        layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("RightColumnScroll")
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        # AsNeeded, not AlwaysOff: if some future row still doesn't fit, a
+        # reachable scrollbar is a smaller failure than the content silently
+        # being clipped with no way to see the rest of it.
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        return scroll
 
     def _build_analysis_panel(self, analyze_shortcut_label: str) -> Panel:
         panel = Panel("Analyzer")
@@ -171,7 +216,15 @@ class AnalyzerScreen(QWidget):
     def _build_recent_clip_panel(self, video_service: VideoService, window_seconds: int) -> Panel:
         panel = Panel(f"Last {window_seconds}s")
         self.recent_clip = RecentClipPreview(video_service, window_seconds)
-        self.recent_clip.setMinimumHeight(160)
+        # RecentClipPreview subclasses VideoSurface, which sets a 320x180
+        # minimum sized for the *main* video panel — inherited here even
+        # though this is a corner thumbnail. That inherited 320 (plus panel
+        # padding) was the real width the review rail could never shrink
+        # below, regardless of how narrow the window was: this call is what
+        # actually fixes the "hidden text on small screens" complaint, more
+        # than any scroll area does. 90px keeps a legible thumbnail without
+        # setting the column's floor.
+        self.recent_clip.setMinimumSize(90, 160)
         self.recent_clip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         panel.body().addWidget(self.recent_clip, stretch=1)
         return panel
@@ -180,6 +233,67 @@ class AnalyzerScreen(QWidget):
         panel = Panel("Alternatives")
         panel.body().addWidget(self.review.side_widget, stretch=1)
         return panel
+
+    def _build_offside_panel(self) -> Panel:
+        panel = Panel("Offside")
+        self.offside_progress = OffsideProgressPanel()
+        panel.body().addWidget(self.offside_progress)
+        self.offside = OffsideReviewPanel()
+        # An override changes the verdict, so it changes the colour of the line
+        # drawn on the frame too — the panel and the picture must never
+        # disagree about what the call currently is.
+        self.offside.override_changed.connect(self._on_offside_override)
+        panel.body().addWidget(self.offside, stretch=1)
+        return panel
+
+    def _on_offside_override(self, _verdict) -> None:
+        self.review.set_offside(self._offside_decision, self.offside.explanation)
+
+    def _build_pitch_panel(self) -> Panel:
+        panel = Panel("Pitch map")
+        self.pitch_map = PitchMapPanel()
+        panel.body().addWidget(self.pitch_map)
+        return panel
+
+    # -- offside decisions (M2.7) ----------------------------------------
+
+    def set_offside_decision(self, decision, explanation=None) -> None:
+        """Show one frame's offside call: the panel, and the line on the frame.
+
+        Passing None for both is how the screen goes back to plain M1 review —
+        an offside line left over from a previous candidate would be worse than
+        no line, since it would look like a call about the frame on screen.
+        """
+        self._offside_decision = decision
+        self.offside_progress.finish()
+        self.offside.set_explanation(explanation)
+        self.review.set_offside(decision, self.offside.explanation)
+
+    def set_pitch_analysis(self, analysis, pitch, marked_landmarks: dict | None = None) -> None:
+        """The top-down map for the same frame `set_offside_decision` is
+        showing. A separate call, not folded into `set_offside_decision`,
+        because the map needs `pitch` (`OffsidePipeline.pitch`) and the raw
+        `FrameAnalysis`, neither of which the offside panel itself needs."""
+        self.pitch_map.set_analysis(analysis, pitch, marked_landmarks)
+
+    def show_offside_started(self, frame_id: int) -> None:
+        self.offside_progress.start(frame_id)
+        # A fresh check is starting; the previous frame's verdict is now
+        # stale and must not linger on screen while the new one is computed.
+        self.offside.clear()
+        self.pitch_map.clear()
+
+    def show_offside_stage(self, report) -> None:
+        self.offside_progress.report_stage(report)
+
+    def show_offside_failed(self, frame_id: int, message: str) -> None:
+        self.offside_progress.fail(message)
+
+    def clear_offside_decision(self) -> None:
+        self._offside_decision = None
+        self.offside.clear()
+        self.review.set_offside(None, None)
+        self.pitch_map.clear()
 
     # -- called when the screen becomes visible --------------------------
 

@@ -17,14 +17,15 @@
 VENV_DIR := .venv
 PYTHON   := $(VENV_DIR)\Scripts\python.exe
 
-.PHONY: up venv install run debug-ui test test-unit test-integration soak lint fixture package clean help
+.PHONY: up venv install run inspect debug-ui test test-unit test-integration soak lint fixture package clean help
 
 help:
 	@echo make up        - create venv, install deps, run the app
 	@echo make venv      - create the virtualenv only
 	@echo make install   - install/sync dependencies into the venv
 	@echo make run       - run the app (venv must already exist)
-	@echo make debug-ui  - open the offside pipeline debugger on the reference clip
+	@echo make inspect   - open the pipeline inspector (any video; reference clip by default)
+	@echo make debug-ui  - alias for make inspect
 	@echo make test      - run the full test suite (soak tests excluded)
 	@echo make soak      - run the long-running memory/stability tests
 	@echo make lint      - run ruff
@@ -67,8 +68,11 @@ run:
 
 # Visual debugger for the offside pipeline. Opens the client reference clip
 # by default; pass another with CLIP=path/to/file.mp4
-debug-ui:
+inspect:
 	"$(PYTHON)" -m tools.pipeline_debugger $(CLIP)
+
+# Kept so existing notes and muscle memory still work.
+debug-ui: inspect
 
 test: install
 	"$(PYTHON)" -m pytest tests -q

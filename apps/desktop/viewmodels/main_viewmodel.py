@@ -26,6 +26,7 @@ from analysis.request_manager.manager import AnalysisRequestManager, TrackedRequ
 from analysis.request_manager.states import RequestState, is_active
 from core.config.schema import AppSettings
 from core.domain.models import FramePacket
+from apps.desktop.viewmodels.offside_runner import OffsideRunner
 from observability.logging.setup import get_logger
 from video.frame_access.video_service import StreamState, VideoService, VideoStats
 from vision.features.feature_cache import FeatureCache
@@ -90,6 +91,11 @@ class MainViewModel(QObject):
         )
 
         self._model_thread: threading.Thread | None = None
+
+        # M2.7: one pipeline instance for the life of the app, shared across
+        # every confirmed frame — see OffsideRunner's own docstring for why a
+        # plain thread rather than the request manager's state machine.
+        self._offside = OffsideRunner(settings, self._registry)
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -258,6 +264,19 @@ class MainViewModel(QObject):
     @property
     def registry(self) -> ModelRegistry:
         return self._registry
+
+    @property
+    def offside(self) -> OffsideRunner:
+        return self._offside
+
+    def check_offside(self, frame_id: int, image) -> None:
+        """Run the M2 pipeline on a confirmed frame — the operator's trigger
+        for it. Automatic on confirm, not automatic on every frame: the
+        pipeline reads model checkpoints and mutates team/identity state, and
+        running it continuously would fight the live preview for the GPU for
+        no benefit — an offside call is only ever asked about the one frame
+        the operator confirmed."""
+        self._offside.analyse(frame_id, image)
 
     @property
     def feature_cache(self) -> FeatureCache:

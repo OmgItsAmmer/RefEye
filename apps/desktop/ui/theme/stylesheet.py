@@ -379,6 +379,49 @@ QWidget#CandidateRow[selected="true"] {{
     border-left: 2px solid {t.PRIMARY};
 }}
 
+/* ---------- offside review (M2.7) ---------- */
+/* The selected override reads as *chosen by a person*, so it uses the same
+   primary fill the app gives a deliberate selection everywhere else — the
+   operator must be able to see at a glance that the call on screen is
+   theirs and not the tool's. */
+QPushButton[selected="true"] {{
+    background-color: {t.PRIMARY_BG_HOVER};
+    border: 1px solid {t.PRIMARY};
+    color: {t.TEXT_PRIMARY};
+}}
+
+QWidget#SignalRow {{
+    background-color: transparent;
+}}
+
+QWidget#SignalRow:hover {{
+    background-color: {t.BG_SURFACE_2};
+}}
+
+QWidget#RequirementRow {{
+    background-color: transparent;
+}}
+
+QWidget#RequirementRow:hover {{
+    background-color: {t.BG_SURFACE_2};
+}}
+
+/* The verdict word: the one thing this panel exists to say, sized to read
+   from across the room. Neutral colour deliberately — see offside_review.py
+   for why this is never coloured by verdict. */
+QLabel#VerdictWord {{
+    color: {t.TEXT_PRIMARY};
+}}
+
+/* A tinted card, not another paragraph — actionable next steps set visually
+   apart, the same left-accent language the app already uses for "this is a
+   deliberate selection" (see the override buttons and CandidateRow above). */
+QWidget#SuggestionBox {{
+    background-color: {t.PRIMARY_BG};
+    border-left: 2px solid {t.PRIMARY_BORDER};
+    border-radius: {t.RADIUS_CONTROL}px;
+}}
+
 /* ---------- dividers ---------- */
 QFrame[role="divider"] {{
     background-color: {t.BORDER};
@@ -431,6 +474,15 @@ QLabel#DisclaimerHeading {{
     color: {t.ALERT};
     font-weight: {t.WEIGHT_SEMIBOLD};
     font-size: {t.FONT_SIZE_BODY}px;
+}}
+
+/* ---------- scroll areas ---------- */
+/* QScrollArea paints an opaque (usually white) background behind its
+   viewport by default; without this rule a scrollable panel on a dark
+   screen shows a bright rectangle the instant it needs to scroll. */
+QScrollArea, QScrollArea > QWidget > QWidget {{
+    background: transparent;
+    border: none;
 }}
 
 /* ---------- scrollbars ---------- */

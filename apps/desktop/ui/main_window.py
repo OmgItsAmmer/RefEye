@@ -112,6 +112,15 @@ class MainWindow(QMainWindow):
         )
         self._analyzer.camera_pick_requested.connect(lambda: self._go_to_screen("live_grid"))
 
+        # M2.7: the offside pipeline runs automatically once a frame is
+        # confirmed (see MainViewModel.check_offside / OffsideRunner). These
+        # three signals are the whole of that wiring — start, per-stage
+        # progress, and the finished call.
+        self._vm.offside.started.connect(self._analyzer.show_offside_started)
+        self._vm.offside.stage_progress.connect(self._analyzer.show_offside_stage)
+        self._vm.offside.completed.connect(self._on_offside_completed)
+        self._vm.offside.failed.connect(self._analyzer.show_offside_failed)
+
         self._help = HelpScreen(settings=self._settings, registry=self._vm.registry)
 
         self._stack = QStackedWidget()
@@ -418,6 +427,22 @@ class MainWindow(QMainWindow):
             message = f"Frame {frame_id} confirmed, but saving to disk failed — see logs."
         self.statusBar().showMessage(message, 8000)
         self._event_ticker.push(message)
+
+        session = self._analyzer.review._session  # noqa: SLF001 — sibling widget state
+        current = session.current_frame() if session else None
+        if current is not None:
+            confirmed_frame_id, image = current
+            self._vm.check_offside(confirmed_frame_id, image)
+
+    def _on_offside_completed(self, analysis) -> None:
+        self._analyzer.set_offside_decision(analysis.offside, analysis.explanation)
+
+        pipeline = self._vm.offside.pipeline
+        marked = {
+            correspondence.landmark: correspondence.image_xy
+            for correspondence in pipeline.manual_correspondences
+        }
+        self._analyzer.set_pitch_analysis(analysis, pipeline.pitch, marked)
 
     def _save_confirmed_frame(self, session, candidate, frame_id: int):
         """Write the confirmed frame to disk as a JPEG so the operator has

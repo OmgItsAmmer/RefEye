@@ -271,6 +271,170 @@ class TestClustering:
         assert assignment.warnings
 
 
+class TestPatternedKits:
+    """Roughly half of real kits are striped or hooped, and a single average
+    colour is meaningless for all of them."""
+
+    def _striped_player(self, image, x, y, first, second, *, horizontal=False):
+        pose = add_player(image, x, y, first)
+        x1, y1, x2, y2 = pose.bbox_xyxy
+        top, bottom = y1 + PLAYER_H * 0.25, y1 + PLAYER_H * 0.55
+        left, right = x1 + PLAYER_W * 0.15, x2 - PLAYER_W * 0.15
+        if horizontal:
+            for band in range(int(top), int(bottom), 6):
+                cv2.rectangle(image, (int(left), band), (int(right), band + 3), second, -1)
+        else:
+            for band in range(int(left), int(right), 6):
+                cv2.rectangle(image, (band, int(top)), (band + 3, int(bottom)), second, -1)
+        return pose
+
+    def test_a_striped_kit_is_not_reduced_to_a_muddy_average(self):
+        image = make_scene()
+        striped = self._striped_player(image, 400, 400, (40, 40, 200), (200, 60, 40))
+
+        colour = JerseyColorExtractor().extract(image, striped)
+
+        assert colour.patterned
+        assert colour.bgr != colour.secondary_bgr
+
+    def test_a_striped_team_is_not_confused_with_the_blend_of_its_colours(self, assigner):
+        """A red-and-blue striped kit averages to a purple that a solid purple
+        kit would match exactly. Two colours per player is what prevents it."""
+        image = make_scene()
+        poses = [
+            self._striped_player(image, 250 + i * 70, 400, (40, 40, 200), (200, 60, 40))
+            for i in range(6)
+        ]
+        poses += [add_player(image, 750 + i * 70, 430, (150, 50, 150)) for i in range(6)]
+
+        assignment = assigner.assign(image, poses)
+
+        striped_teams = {assignment.by_index(i).team_id for i in range(6)}
+        solid_teams = {assignment.by_index(i).team_id for i in range(6, 12)}
+        assert len(striped_teams) == 1
+        assert len(solid_teams) == 1
+        assert striped_teams != solid_teams
+
+    def test_black_and_white_hoops_are_not_collapsed_into_grey(self):
+        """Hooped kits differ in *nothing but* brightness, so a hue-only test
+        would merge them — and then a solid grey kit would match them."""
+        image = make_scene()
+        hooped = self._striped_player(
+            image, 400, 400, (25, 25, 25), (235, 235, 235), horizontal=True
+        )
+
+        colour = JerseyColorExtractor().extract(image, hooped)
+
+        assert colour.patterned
+
+    def test_a_crease_in_a_solid_shirt_is_not_reported_as_a_pattern(self):
+        """The failure found on the reference clip: a brightness-only test
+        called half the players in a solid-kit match striped."""
+        image = make_scene()
+        pose = add_player(image, 400, 400, RED_KIT)
+        x1, y1, _, _ = pose.bbox_xyxy
+        shaded = tuple(int(c * 0.75) for c in RED_KIT)
+        cv2.rectangle(
+            image,
+            (int(x1 + PLAYER_W * 0.15), int(y1 + PLAYER_H * 0.4)),
+            (int(x1 + PLAYER_W * 0.45), int(y1 + PLAYER_H * 0.55)),
+            shaded,
+            -1,
+        )
+
+        colour = JerseyColorExtractor().extract(image, pose)
+
+        assert not colour.patterned
+
+
+class TestLighting:
+    def test_the_same_kit_in_sun_and_shade_stays_one_team(self, assigner):
+        """A half-shadowed pitch is the classic way one team splits into two
+        colour groups. The grass beside each player is the reference that
+        takes the lighting back out."""
+        image = make_scene()
+        poses = [add_player(image, 250 + i * 70, 400, RED_KIT) for i in range(6)]
+        poses += [add_player(image, 800 + i * 70, 430, BLUE_KIT) for i in range(6)]
+
+        # Darken the right half — players *and* the grass they stand on, which
+        # is what a stand's shadow actually does.
+        shaded = (image[:, 640:].astype(np.float32) * 0.55).astype(np.uint8)
+        image[:, 640:] = shaded
+
+        assignment = assigner.assign(image, poses)
+
+        reds = {assignment.by_index(i).team_id for i in range(6)}
+        blues = {assignment.by_index(i).team_id for i in range(6, 12)}
+        assert len(reds) == 1 and len(blues) == 1
+        assert reds != blues
+
+    def test_lighting_correction_can_be_switched_off(self):
+        image = make_scene()
+        pose = add_player(image, 400, 400, RED_KIT)
+
+        corrected = JerseyColorExtractor().extract(image, pose)
+        raw = JerseyColorExtractor(normalize_illumination=False).extract(image, pose)
+
+        assert corrected.is_usable and raw.is_usable
+        assert "lighting" in corrected.reason
+        assert "left as filmed" in raw.reason
+
+
+class TestPerTrackVoting:
+    """A player's team belongs to the person, not to one frame."""
+
+    def test_one_bad_frame_does_not_change_a_settled_player(self, assigner):
+        image, poses = two_team_scene()
+        for _ in range(6):
+            assigner.assign(image, poses)
+        before = assigner.assign(image, poses)
+        settled = before.by_index(0)
+        assert not settled.needs_confirmation
+
+        # Now repaint player 0's shirt in the *other* team's colour for a
+        # single frame, as motion blur or an occluding opponent would.
+        corrupted = image.copy()
+        x1, y1, x2, y2 = poses[0].bbox_xyxy
+        cv2.rectangle(
+            corrupted,
+            (int(x1 + PLAYER_W * 0.15), int(y1 + PLAYER_H * 0.25)),
+            (int(x2 - PLAYER_W * 0.15), int(y1 + PLAYER_H * 0.55)),
+            BLUE_KIT,
+            -1,
+        )
+        after = assigner.assign(corrupted, poses)
+
+        assert after.by_index(0).team_id == settled.team_id
+        assert after.by_index(0).vote_share is not None
+
+    def test_a_player_seen_once_is_flagged_rather_than_trusted(self, assigner):
+        image, poses = two_team_scene()
+
+        assignment = assigner.assign(image, poses)
+
+        assert all(p.needs_confirmation for p in assignment.players)
+        assert assignment.settled() == []
+
+    def test_evidence_accumulates_until_players_are_settled(self, assigner):
+        image, poses = two_team_scene()
+
+        for _ in range(5):
+            assignment = assigner.assign(image, poses)
+
+        assert len(assignment.settled()) >= 8
+        assert all(p.frames_pooled >= 3 for p in assignment.players if p.is_assigned)
+
+    def test_a_reset_forgets_the_accumulated_evidence(self, assigner):
+        image, poses = two_team_scene()
+        for _ in range(5):
+            assigner.assign(image, poses)
+
+        assigner.reset()
+        assignment = assigner.assign(image, poses)
+
+        assert assignment.settled() == []
+
+
 class TestGoalkeeper:
     def test_an_odd_kit_alone_at_one_end_is_the_goalkeeper(self, assigner):
         image, poses = two_team_scene(keeper=KEEPER_KIT)
@@ -327,6 +491,20 @@ class TestAttackingSide:
         assert assignment.attacking_team_id == assignment.by_index(0).team_id
         assert assignment.defending_team_id != assignment.attacking_team_id
 
+    def test_the_confirmed_passer_outranks_the_ball_detection(self, assigner):
+        """The operator has already confirmed the contact frame in the review
+        panel, so who played the ball is known rather than inferred — and a
+        stray ball detection must not override it."""
+        image, poses = two_team_scene()
+        passer = poses[7].ground_point.xy  # a team-B player
+        stray_ball = poses[0].ground_point.xy  # a team-A player
+
+        assignment = assigner.assign(image, poses, ball_xy=stray_ball, passer_xy=passer)
+
+        assert assignment.attacking_team_id == assignment.by_index(7).team_id
+        assert assignment.attacking_team_id != assignment.by_index(0).team_id
+        assert any("played the ball" in reason for reason in assignment.reasons)
+
     def test_no_ball_means_no_sides_and_a_capped_confidence(self, assigner):
         image, poses = two_team_scene()
 
@@ -343,6 +521,36 @@ class TestAttackingSide:
         assignment = assigner.assign(image, poses, ball_xy=(50.0, 50.0))
 
         assert assignment.attacking_team_id is None
+
+    def test_an_unteamed_player_closer_to_the_ball_does_not_veto_the_signal(
+        self, assigner
+    ):
+        """Found on real broadcast footage: a referee or a player whose shirt
+        could not be sampled can land fractionally closer to the ball than
+        the real contender. The single nearest detection having no team must
+        not throw away a perfectly good signal one rank down — there were
+        real, in-range players on that frame the whole time."""
+        image, poses = two_team_scene()
+        px, py = poses[7].ground_point.xy  # a team-B player
+        ball = (px - 30, py)
+
+        # An unmeasured player, 35px clear of player 7 so the two shirts
+        # don't overlap on the canvas, but 5px from the ball versus player
+        # 7's 30 — closer, and with no kit colour to place them on a team.
+        unteamed = add_player(image, px - 35, py, RED_KIT, with_keypoints=False)
+        cv2.rectangle(
+            image,
+            (int(px - 35 - 15), int(py - 90)),
+            (int(px - 35 + 15), int(py)),
+            GRASS,
+            -1,
+        )
+        poses.append(unteamed)
+
+        assignment = assigner.assign(image, poses, ball_xy=ball)
+
+        assert assignment.by_index(len(poses) - 1).team_id is None  # confirms the setup
+        assert assignment.attacking_team_id == assignment.by_index(7).team_id
 
     def test_the_defending_side_includes_its_goalkeeper(self, assigner):
         image, poses = two_team_scene(keeper=KEEPER_KIT)

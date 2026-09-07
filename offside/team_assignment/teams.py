@@ -72,6 +72,9 @@ class JerseyColor:
     because a future extractor (a crop embedding, say) would produce a
     high-dimensional `vector` with no colour meaning at all, while still
     wanting a swatch to show — see `jersey_color.py`.
+
+    Two swatches, because a striped kit has two colours and averaging them
+    produces a blend that matches neither and is unstable between frames.
     """
 
     vector: tuple[float, ...]
@@ -80,6 +83,13 @@ class JerseyColor:
     confidence: float
     source: str
     reason: str
+    secondary_bgr: tuple[int, int, int] = (0, 0, 0)
+    #: True when the two measured colours are genuinely different — a striped
+    #: or hooped kit rather than a solid one.
+    patterned: bool = False
+    #: How many frames this colour was pooled from. One frame is a snapshot;
+    #: a pooled measurement over a track is what makes the answer stable.
+    sample_count: int = 1
 
     @property
     def is_usable(self) -> bool:
@@ -196,6 +206,15 @@ class PlayerTeam:
     #: metres at METRIC level, an arbitrary but monotonic image-space score at
     #: DIRECTIONAL level. None means depth could not be established.
     depth: float | None = None
+    #: How much of the accumulated evidence across frames agrees with this
+    #: team, and how many frames that evidence covers.
+    vote_share: float | None = None
+    frames_pooled: int = 1
+    #: True when this player should be confirmed by the operator before a
+    #: verdict is built on them. The design target is that everything *not*
+    #: flagged is safe to act on — residual error should surface as a question
+    #: rather than as a confident wrong answer.
+    needs_confirmation: bool = False
 
     @property
     def is_assigned(self) -> bool:
@@ -254,6 +273,18 @@ class TeamAssignment:
 
     def unassigned(self) -> list[PlayerTeam]:
         return [p for p in self.players if p.team_id is None]
+
+    def needs_confirmation(self) -> list[PlayerTeam]:
+        """The players the operator should glance at before a call is made.
+
+        This is the safety valve for the whole stage: the thresholds behind it
+        are set so that a player who is *not* on this list is one the pipeline
+        is prepared to be judged on.
+        """
+        return [p for p in self.players if p.needs_confirmation]
+
+    def settled(self) -> list[PlayerTeam]:
+        return [p for p in self.players if not p.needs_confirmation and p.is_assigned]
 
     def counts(self) -> dict[str, int]:
         return {

@@ -31,6 +31,10 @@ CLIP = Path("data/videos/client_m2_test_video.mp4")
 
 SAMPLE_FRAMES = (120, 200, 300)
 
+#: A run of consecutive frames, for the per-player pooling and voting.
+RUN_START = 90
+RUN_LENGTH = 20
+
 
 def _device() -> str:
     try:
@@ -172,6 +176,117 @@ def test_the_same_footage_gives_the_same_teams_twice(clip_frames, poses):
     first = TeamAssigner().assign(clip_frames[0].image, poses[0])
     second = TeamAssigner().assign(clip_frames[0].image, poses[0])
     assert [p.team_id for p in first.players] == [p.team_id for p in second.players]
+
+
+@pytest.fixture(scope="module")
+def consecutive_frames() -> list[FramePacket]:
+    """A run of consecutive frames — the only way to exercise the part of this
+    stage that decides a player's team from *many* frames rather than one."""
+    if not CLIP.exists():
+        pytest.skip(f"{CLIP} not present — the client reference clip is not in git")
+
+    import cv2
+
+    capture = cv2.VideoCapture(str(CLIP))
+    frames: list[FramePacket] = []
+    try:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, RUN_START)
+        for offset in range(RUN_LENGTH):
+            ok, image = capture.read()
+            if not ok:
+                break
+            frame_id = RUN_START + offset
+            height, width = image.shape[:2]
+            frames.append(
+                FramePacket(
+                    frame_id=frame_id,
+                    pts=frame_id,
+                    timestamp_ms=int(frame_id * 1000 / 30),
+                    capture_timestamp_ms=int(frame_id * 1000 / 30),
+                    width=width,
+                    height=height,
+                    source_id="client_m2_test_video",
+                    image=image,
+                )
+            )
+    finally:
+        capture.release()
+
+    if len(frames) < 5:
+        pytest.skip("could not decode a run of frames from the reference clip")
+    return frames
+
+
+@pytest.fixture(scope="module")
+def run_assignments(consecutive_frames):
+    if not (POSE_CHECKPOINT.exists() and DETECTOR_CHECKPOINT.exists()):
+        pytest.skip("model checkpoints not present — see models/pose/README.md")
+
+    from offside.body_keypoints.estimator import YoloPoseEstimator
+    from vision.detection.yolo_detector import YoloObjectDetector
+
+    detector = YoloObjectDetector(
+        checkpoint=str(DETECTOR_CHECKPOINT),
+        confidence_threshold=0.35,
+        ball_confidence_threshold=0.15,
+        device=_device(),
+        imgsz=1280,
+    )
+    detector.load()
+    estimator = YoloPoseEstimator(checkpoint=str(POSE_CHECKPOINT), device=_device())
+    estimator.load()
+
+    detections = detector.detect_batch(consecutive_frames)
+    poses = estimator.estimate_batch(consecutive_frames, detections)
+
+    assigner = TeamAssigner()
+    return [
+        assigner.assign(frame.image, frame_poses, frame_id=frame.frame_id)
+        for frame, frame_poses in zip(consecutive_frames, poses)
+    ]
+
+
+def test_a_players_team_does_not_flicker_between_frames(run_assignments):
+    """The reason team decisions are pooled per player rather than made per
+    frame. A player flickering between sides is both wrong and destroys the
+    operator's trust in everything else drawn on the frame."""
+    flips = comparisons = 0
+    previous: dict[str, str] = {}
+    for assignment in run_assignments:
+        current = {
+            player.track_id: player.team_id
+            for player in assignment.players
+            if player.track_id and player.team_id
+        }
+        for track_id, team in current.items():
+            if track_id in previous:
+                comparisons += 1
+                flips += previous[track_id] != team
+        previous = current
+
+    assert comparisons > 50, "not enough tracked players to judge stability"
+    assert flips / comparisons < 0.05, f"{flips}/{comparisons} team changes between frames"
+
+
+def test_solid_kits_are_not_mistaken_for_striped_ones(run_assignments):
+    """Both kits in this clip are solid. A pattern test based on brightness
+    called half the players striped here — it was finding creases in shirts."""
+    patterned = total = 0
+    for assignment in run_assignments:
+        for player in assignment.players:
+            if player.color is not None:
+                total += 1
+                patterned += player.color.patterned
+
+    assert total > 0
+    assert patterned / total < 0.2, f"{patterned}/{total} solid kits read as patterned"
+
+
+def test_evidence_accumulates_into_settled_players(run_assignments):
+    """Nothing is claimed as settled on first sight; confidence has to be
+    earned over frames, and then most players should reach it."""
+    assert run_assignments[0].settled() == []
+    assert len(run_assignments[-1].settled()) >= 5
 
 
 def test_an_operator_correction_survives_into_the_result(clip_frames, poses):

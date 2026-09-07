@@ -54,6 +54,7 @@ from apps.desktop.ui.widgets.common import (
     meta,
 )
 from apps.desktop.ui.widgets.video_panel import VideoSurface
+from offside.offside_line.rendering import draw_offside_overlay
 from vision.features.feature_cache import FeatureCache
 
 
@@ -126,6 +127,11 @@ class CandidateReviewPanel(QWidget):
         self._session: ReviewSession | None = None
         self._rows: list[CandidateRow] = []
         self._feature_cache = feature_cache
+        # M2.7: the offside call for the frame currently shown, drawn onto it.
+        # None means no offside analysis has been run — the M1 behaviour, which
+        # this must not disturb.
+        self._offside_decision = None
+        self._offside_explanation = None
 
         self.video_widget = self._build_video_column()
         self.side_widget = self._build_side_column()
@@ -329,7 +335,7 @@ class CandidateReviewPanel(QWidget):
         current = session.current_frame()
         if current is not None:
             frame_id, image = current
-            self._surface.set_frame(image)
+            self._surface.set_frame(self._with_offside_line(image))
             self._apply_overlay(frame_id)
         else:
             frame_id = candidate.refined_frame_id
@@ -350,6 +356,34 @@ class CandidateReviewPanel(QWidget):
 
         self._evidence.setText(self._describe(candidate))
         self._update_rows()
+
+    # -- offside (M2.7) -----------------------------------------------------
+
+    def set_offside(self, decision, explanation=None) -> None:
+        """The offside call for the frame on screen, or None to clear it.
+
+        The panel keeps both: the geometry supplies the line and the measured
+        points, and M2.6's explanation decides what verdict — and therefore
+        what colour — the line is drawn in. A call the chain could not carry
+        must not appear on the frame in confident colours simply because the
+        geometry reached it.
+        """
+        self._offside_decision = decision
+        self._offside_explanation = explanation
+        self._refresh()
+
+    def _with_offside_line(self, image):
+        """The frame with the offside overlay drawn on a copy of it.
+
+        A copy because the frame comes from the shared review buffer: drawing
+        into it would burn the line onto the frame everywhere else it is shown,
+        and leave a stale line behind after an override changes the verdict.
+        """
+        if self._offside_decision is None:
+            return image
+        painted = image.copy()
+        draw_offside_overlay(painted, self._offside_decision, self._offside_explanation)
+        return painted
 
     def _apply_overlay(self, frame_id: int) -> None:
         """Unlike Live Grid (which shows the freshest cached entry), review

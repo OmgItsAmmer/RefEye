@@ -78,11 +78,27 @@ ai:
     # wild, oversized, mispositioned boxes that look like a detection bug
     # but are actually "the wrong detector running on the wrong footage."
     provider: "yolo"
-    checkpoint: "./models/detector/yolo11n.pt"
+    # Upgraded from yolo11n (nano, 5.6MB) to yolo11m (medium, ~40MB) —
+    # measured gain on 720p client footage: ankle-level foot points rose from
+    # 63% to (see models/detector/README.md for the before/after numbers).
+    # The offside path is triggered once per confirmed frame, not run
+    # continuously, so the extra inference time (still well under a second on
+    # an 8GB GPU) costs nothing an operator would notice. Still a generic
+    # (non-football-finetuned) model — see FLOW.md's note on stage 1 for the
+    # football-specific checkpoint this should eventually become.
+    checkpoint: "./models/detector/yolo11m.pt"
     confidence_threshold: 0.35
     # The ball is tiny, blurred and often occluded — hold it to a looser bar
-    # than people and let trajectory logic reject the noise.
+    # than people. This alone lets real false positives through (measured:
+    # multiple "ball" detections on 4 of every 10 sampled frames on client
+    # footage) — offside/ball_selection.py is what actually rejects the noise,
+    # using every other player's box on the same frame as a size reference.
     ball_confidence_threshold: 0.15
+    # A real football is ~12-13% of a player's height on screen, and that
+    # ratio barely moves with zoom since both scale together. Measured false
+    # positives on client footage reached 31%. See offside/ball_selection.py.
+    ball_min_size_ratio: 0.06
+    ball_max_size_ratio: 0.22
     imgsz: 640
     # Background detection runs on every Nth frame; the triggered path always
     # analyses every frame in its window.
@@ -134,7 +150,10 @@ offside:
     # Not committed to git (models/**/*.pt) — see models/pose/README.md.
     # Missing checkpoint = offside body points unavailable; M1 analysis is
     # unaffected and the app still starts.
-    checkpoint: "./models/pose/yolo11n-pose.pt"
+    # Upgraded from yolo11n-pose (nano) to yolo11m-pose (medium) — same
+    # reasoning as the detector above: this path runs once per confirmed
+    # frame, not continuously, so the extra accuracy is close to free.
+    checkpoint: "./models/pose/yolo11m-pose.pt"
 
     keypoint_confidence_threshold: 0.5
     person_confidence_threshold: 0.25
@@ -198,6 +217,35 @@ offside:
       merge_distance_px: 14.0
       max_lines: 40
 
+    # Carrying one calibration across a shot as the camera moves. Marked
+    # landmarks are image points, so without this they stay pinned to the same
+    # pixels while the camera pans and the pitch slides out from under them —
+    # and nothing catches it, because four marks always agree with each other
+    # perfectly however wrong they have become.
+    #
+    # A broadcast camera rotates and zooms but does not travel, so every static
+    # point in the frame moves by one shared homography; features are therefore
+    # taken from anywhere except the players, who move by themselves.
+    follow:
+      enabled: true
+      max_features: 600
+      quality_level: 0.01
+      min_distance_px: 12
+      redetect_below: 120
+      ransac_threshold_px: 3.0
+      min_inliers: 25
+      min_inlier_ratio: 0.5
+      # A fast pan moves the scene tens of pixels between frames; the library
+      # default window is too small to find it again, and registration would
+      # then fail exactly when the camera is moving most.
+      flow_window_px: 31
+      flow_pyramid_levels: 4
+      # Drift is cumulative and invisible in the marks themselves, so trust
+      # falls with every frame carried since a human last placed them.
+      confidence_decay_per_frame: 0.004
+      min_confidence: 0.3
+      exclude_box_margin: 0.25
+
   # M2.3 — who is attacking, who is defending, who is in goal.
   #
   # No kit colour appears here, and none ever should: the two teams are
@@ -229,6 +277,33 @@ offside:
     min_sample_pixels: 20
     min_kept_fraction: 0.35
     min_sample_confidence: 0.25
+
+    # The same shirt measures differently in sun and in the shadow of a stand,
+    # which splits one team into two colour groups. The pitch is a giant grey
+    # card of known colour, so the grass beside each player is used to take
+    # the lighting back out before the shirt is measured.
+    normalize_illumination: true
+    illumination_max_gain: 2.0
+
+    # Each player is summarised by their TWO dominant torso colours. A single
+    # average is meaningless for stripes and hoops — a red/blue kit averages to
+    # a purple that matches neither team and shifts as the player turns — and
+    # roughly half of real kits are striped or hooped. A second colour that is
+    # too similar or too rare is sponsor text or noise, and gets collapsed.
+    # A second colour counts as a real pattern only if it differs clearly in
+    # hue (a crease changes how bright fabric is; a stripe changes its colour)
+    # OR differs far more in brightness than a fold ever does, which is how
+    # black-and-white stripes stay distinguishable. Measured: a purely
+    # brightness-based test called half the players on this clip striped,
+    # in a match between two solid kits.
+    pattern_collapse_distance: 25.0
+    pattern_lightness_distance: 35.0
+    pattern_min_share: 0.3
+    max_signature_pixels: 400
+    # Down-weighting lightness looks right and measured worse here: it dropped
+    # kit separation from 58 to 43, because white and maroon differ mostly in
+    # brightness. Lighting is dealt with above instead of by blunting this.
+    lightness_weight: 1.0
 
     min_players_for_clustering: 6
     confident_player_count: 10
@@ -263,6 +338,131 @@ offside:
     ball_ambiguous_ratio: 1.25
 
     persist_colors_across_frames: true
+
+    # A player's team belongs to the person, not to one frame. Measurements
+    # are pooled against a short-lived identity (box overlap until M2.4 gives
+    # real ones) and every frame votes, so a single blurred or half-occluded
+    # frame loses the vote instead of deciding the answer.
+    track_iou_threshold: 0.35
+    track_max_age_frames: 12
+    track_max_samples: 30
+
+    # When to stop and ask. A player below any of these is flagged for
+    # confirmation rather than reported as settled: residual error should
+    # reach the operator as a question, never as a confident wrong answer.
+    # Raise these to ask more often and be wrong less often.
+    vote_share_to_confirm: 0.75
+    confident_player_confidence: 0.6
+    min_frames_to_trust: 3
+
+  # M2.4 — following the same player through the contact moment.
+  #
+  # Separate from ai.tracker, which stays tuned for M1's live preview. If two
+  # players swap identities just before the pass, every later stage still runs
+  # perfectly and draws the line through the wrong person — and nothing
+  # downstream can detect it. So this stage is allowed to be slower, and it is
+  # allowed to answer "I could not tell", which the live tracker cannot.
+  player_identity:
+    enabled: true
+
+    match_iou: 0.3
+    max_misses: 12
+    min_frames_to_confirm: 5
+
+    # Kit colour is what stops a track being handed to the opponent who just
+    # ran across it. It cannot separate teammates — but a same-team swap moves
+    # nobody's position, so it cannot change an offside line either. The swap
+    # that breaks a call is attacker-for-defender, between two different kits,
+    # which is exactly the case this catches.
+    appearance_max_distance: 30.0
+    appearance_memory: 20
+    # Two tracks this close together, with kits that match, is reported as
+    # contested rather than resolved by picking the likelier one.
+    ambiguous_iou_margin: 0.1
+
+    # Coming back after an occlusion needs both a plausible position and a
+    # matching kit; position alone would hand the identity to whoever happens
+    # to be standing there now.
+    reid_max_frames: 20
+    reid_max_distance_boxes: 2.0
+
+    # A one-frame gap is ordinary tracking, not a re-identification: broadcast
+    # detection drops a distant player constantly and the track coasts a step.
+    # Measured: treating every gap as a recovery left 11 of 18 players on this
+    # clip permanently flagged, which would make M2.5 refuse most of the pitch.
+    recovery_gap_frames: 2
+    doubt_frames: 5
+    miss_penalty: 0.15
+
+    # A camera cut ends every identity. Nothing about the previous shot
+    # constrains the next one, and it may even be a replay of play already
+    # seen, so ids restart with a new segment number and can never collide.
+    detect_camera_cuts: true
+    cut_correlation_threshold: 0.6
+    min_frames_between_cuts: 4
+
+  # M2.5 — the second-last defender, the line, and the verdict.
+  #
+  # The geometry is a comparison of two positions along one axis. What decides
+  # whether that comparison is worth reporting is how far out the inputs could
+  # be, which is what these uncertainties describe. Set them too low and the
+  # tool announces verdicts its own measurements cannot support — the one
+  # failure this milestone exists to avoid. A margin smaller than the
+  # uncertainty is reported as "too close to call", with the frame, rather
+  # than as a decision.
+  offside_line:
+    enabled: true
+
+    metric_base_uncertainty_m: 0.15
+    # Counted once for the attacker and once for the defender: both are being
+    # measured, and each is scaled by how much M2.2 trusted its own body point.
+    metric_foot_uncertainty_m: 0.6
+    # Without metres the axis is in pixels, so a player's own height is the
+    # only scale available — and a good one, shrinking with distance exactly
+    # as the measurement error does.
+    directional_uncertainty_boxes: 0.35
+
+    # How far apart the two sides must sit before their shape counts as
+    # evidence of which end is being defended.
+    min_team_separation_m: 3.0
+    min_team_separation_px: 40.0
+
+    # Law 11 needs the attacker nearer the goal line than the ball as well as
+    # the second-last opponent; leaving the ball out is a mistake a
+    # geometry-only tool makes constantly.
+    require_beyond_ball: true
+
+    # Below this the verdict is withheld and the weakest input named instead.
+    # Measured on the reference clip: a frame with the teams mixed together
+    # produced "offside by 14.6m" at a confidence of 0.08, because which end
+    # was being defended was barely more than a guess. A number that precise
+    # beside a confidence that low is the failure this milestone exists to
+    # avoid, so it becomes a refusal that says what to go and fix.
+    min_confidence_to_call: 0.35
+
+  # M2.6 — what the operator is actually told. Confidence here is the weakest
+  # stage in the chain, never the average: averaging is how four solid stages
+  # outvote the one that failed, which is precisely the one that decided the
+  # verdict.
+  decision_support:
+    enabled: true
+
+    # "High" must mean the call can be signed without opening the frame.
+    high_confidence: 0.7
+    # Below this the call is a suggestion to be judged by eye.
+    medium_confidence: 0.45
+
+    # Below this a yes/no is withheld and the weakest stage named instead.
+    # Slightly above M2.5's own floor because this stage sees inputs M2.5
+    # never does — drifted pitch marks, contested identities, unconfirmed kit
+    # colours — each of which yields a decision that looks normal and is
+    # wrong. "Too close to call" is never withheld: it is already an
+    # abstention, and a weak chain cannot make an abstention wrong.
+    min_confidence_to_publish: 0.4
+
+    # A list nobody reads is the same as no list.
+    max_limits: 3
+    max_actions: 3
 
 runtime:
   device: "cuda"          # cuda | cpu — "cuda" means prefer GPU, auto-fallback to CPU if unavailable

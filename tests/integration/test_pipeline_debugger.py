@@ -14,6 +14,7 @@ import pytest
 
 from core.config.loader import load_settings
 from core.domain.models import FramePacket
+from offside.offside_line import Verdict
 from tools.pipeline_debugger.pipeline import OffsidePipeline, StageState
 
 CLIP = Path("data/videos/client_m2_test_video.mp4")
@@ -71,13 +72,39 @@ def test_every_plan_stage_appears_even_with_no_models(settings):
     assert {"M2.1", "M2.2", "M2.3", "M2.4", "M2.5", "M2.6"} <= phases
 
 
-def test_unbuilt_stages_are_marked_pending_not_failed(settings):
+def test_no_stage_of_the_pipeline_is_still_pending(settings):
+    """Every phase of M2 is built as of M2.6. This is the test that will fail
+    first if a stage is ever removed from the panel rather than implemented —
+    a missing stage must read as missing, never as done."""
     analysis = OffsidePipeline(settings, _EmptyRegistry()).analyse(blank_frame(), 0)
-    by_phase = {report.phase: report for report in analysis.reports}
 
-    for phase in ("M2.4", "M2.5", "M2.6"):
-        assert by_phase[phase].state is StageState.PENDING
-        assert "not built yet" in by_phase[phase].summary
+    pending = [r.phase for r in analysis.reports if r.state is StageState.PENDING]
+    assert not pending
+    assert all("not built yet" not in r.summary for r in analysis.reports)
+
+
+def test_decision_support_refuses_rather_than_reporting_nothing(settings):
+    """M2.6 is built, so on a frame with nobody on it it must say why there is
+    no call — not stay silent, which would be indistinguishable from a stage
+    that never ran."""
+    analysis = OffsidePipeline(settings, _EmptyRegistry()).analyse(blank_frame(), 0)
+    report = {r.phase: r for r in analysis.reports}["M2.6"]
+
+    assert analysis.explanation is not None
+    assert analysis.explanation.verdict is Verdict.INCONCLUSIVE
+    assert report.summary.startswith("No call")
+    assert analysis.explanation.weakest is not None, "a refusal must name a cause"
+
+
+def test_player_identity_reports_no_players_rather_than_pending(settings):
+    """M2.4 is built, so on a frame with nobody on it the stage must say that
+    — not "not built", which would hide a failing stage behind a missing one."""
+    analysis = OffsidePipeline(settings, _EmptyRegistry()).analyse(blank_frame(), 0)
+    report = {r.phase: r for r in analysis.reports}["M2.4"]
+
+    assert report.state is not StageState.PENDING
+    assert "not built yet" not in report.summary
+    assert analysis.identities is not None
 
 
 def test_team_assignment_reports_no_players_rather_than_pending(settings):
@@ -181,3 +208,67 @@ def test_runs_on_the_real_clip_with_real_models(settings):
     assert by_phase["M2.2"].state in (StageState.OK, StageState.DEGRADED)
     # Never metric without an operator marking the pitch.
     assert not analysis.calibration.is_metric
+
+
+@pytest.mark.skipif(not CLIP.exists(), reason="client reference clip is not in git")
+def test_marks_follow_the_camera_through_the_pipeline(settings):
+    """End to end: mark the pitch once, then let the camera pan.
+
+    Without the follower the marks stay pinned to the same pixels while the
+    pitch moves away underneath them, and nothing reports it — four marks
+    always agree with each other, so the reprojection error stays at zero
+    while the calibration goes badly wrong.
+    """
+    import cv2
+
+    capture = cv2.VideoCapture(str(CLIP))
+    capture.set(cv2.CAP_PROP_POS_FRAMES, 90)
+    frames = []
+    for offset in range(25):
+        ok, image = capture.read()
+        if not ok:
+            break
+        height, width = image.shape[:2]
+        frames.append(
+            FramePacket(
+                frame_id=90 + offset,
+                pts=90 + offset,
+                timestamp_ms=(90 + offset) * 33,
+                capture_timestamp_ms=(90 + offset) * 33,
+                width=width,
+                height=height,
+                source_id="test",
+                image=image,
+            )
+        )
+    capture.release()
+    if len(frames) < 10:
+        pytest.skip("could not decode a run of frames")
+
+    pipeline = OffsidePipeline(settings, _DetectorOnlyRegistry())
+    for landmark, point in (
+        ("corner_left_top", (280.0, 210.0)),
+        ("corner_right_top", (1180.0, 250.0)),
+        ("corner_right_bottom", (1500.0, 690.0)),
+        ("corner_left_bottom", (-140.0, 620.0)),
+    ):
+        pipeline.mark_landmark(point, landmark)
+
+    first = pipeline.analyse(frames[0], frames[0].frame_id)
+    assert first.calibration.is_metric
+
+    start = {c.landmark: c.image_xy for c in pipeline.manual_correspondences}
+    for frame in frames[1:]:
+        analysis = pipeline.analyse(frame, frame.frame_id)
+
+    moved = {c.landmark: c.image_xy for c in pipeline.manual_correspondences}
+    drift = max(
+        abs(moved[name][0] - start[name][0]) for name in start if name in moved
+    )
+
+    assert analysis.calibration.is_metric, "the calibration was dropped mid-shot"
+    assert drift > 20, f"the marks did not follow the camera (moved {drift:.0f}px)"
+    # Carried marks must cost confidence, or the operator has no signal that
+    # the calibration is ageing.
+    assert analysis.calibration.confidence < first.calibration.confidence
+    assert any("carried" in reason for reason in analysis.calibration.reasons)

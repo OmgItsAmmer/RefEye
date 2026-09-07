@@ -138,6 +138,17 @@ class DetectorConfig(StrictModel):
     #: detection buys little and starves the triggered path (section 13).
     live_frame_stride: int = Field(default=3, gt=0)
 
+    #: A ball's true size relative to a player barely changes with zoom,
+    #: because both scale together — so a size band against the median
+    #: player box height on the same frame is a solid, frame-invariant
+    #: sanity check. A real football against a real player is ~12-13%;
+    #: measured false positives on client footage reached 31%. Any "ball"
+    #: detection outside this band is discarded rather than trusted, because
+    #: a wrong ball position corrupts the attacking-side call (M2.3) and the
+    #: "beyond the ball" offside check (M2.5) silently.
+    ball_min_size_ratio: float = Field(default=0.06, ge=0.0, le=1.0)
+    ball_max_size_ratio: float = Field(default=0.22, ge=0.0, le=1.0)
+
 
 class TrackerConfig(StrictModel):
     provider: str
@@ -292,6 +303,45 @@ class PitchLineDetectionConfig(StrictModel):
     max_lines: int = Field(default=40, gt=0)
 
 
+class CalibrationFollowConfig(StrictModel):
+    """Carrying one calibration across a shot as the camera moves (M2.1).
+
+    Marked landmarks are image points: without this, four marks stay pinned to
+    the same pixels while the camera pans and the pitch moves out from under
+    them. Nothing catches that on its own — the four marks still agree with
+    each other perfectly, so the reprojection error stays at zero while the
+    calibration describes a camera that stopped existing seconds ago.
+    """
+
+    enabled: bool = True
+
+    #: Features are tracked anywhere in the frame, not only on the pitch: a
+    #: camera that rotates and zooms without travelling moves every static
+    #: point by one shared homography, however far away it is.
+    max_features: int = Field(default=600, gt=0)
+    quality_level: float = Field(default=0.01, gt=0.0, le=1.0)
+    min_distance_px: int = Field(default=12, gt=0)
+    #: Re-detect once tracking has worn the feature set down to this many.
+    redetect_below: int = Field(default=120, gt=0)
+
+    ransac_threshold_px: float = Field(default=3.0, gt=0.0)
+    min_inliers: int = Field(default=25, gt=0)
+    min_inlier_ratio: float = Field(default=0.5, ge=0.0, le=1.0)
+    #: A fast pan moves the scene tens of pixels between frames. The library's
+    #: default flow window is too small to find it again, so registration
+    #: would fail exactly when the camera is moving most.
+    flow_window_px: int = Field(default=31, gt=2)
+    flow_pyramid_levels: int = Field(default=4, ge=0)
+
+    #: Drift is cumulative and invisible in the marks themselves, so trust
+    #: falls with every frame carried since a human last placed them.
+    confidence_decay_per_frame: float = Field(default=0.004, ge=0.0, le=1.0)
+    min_confidence: float = Field(default=0.3, ge=0.0, le=1.0)
+    #: Players are masked before features are chosen — a feature on a running
+    #: player reports the player's motion, not the camera's.
+    exclude_box_margin: float = Field(default=0.25, ge=0.0, le=1.0)
+
+
 class PitchCalibrationConfig(StrictModel):
     """Mapping the camera view onto the pitch (M2.1)."""
 
@@ -318,6 +368,7 @@ class PitchCalibrationConfig(StrictModel):
     line_detection: PitchLineDetectionConfig = Field(
         default_factory=PitchLineDetectionConfig
     )
+    follow: CalibrationFollowConfig = Field(default_factory=CalibrationFollowConfig)
 
 
 class TeamAssignmentConfig(StrictModel):
@@ -360,6 +411,37 @@ class TeamAssignmentConfig(StrictModel):
     #: reported with reduced confidence rather than as a clean measurement.
     min_kept_fraction: float = Field(default=0.35, gt=0.0, le=1.0)
     min_sample_confidence: float = Field(default=0.25, ge=0.0, le=1.0)
+
+    # -- taking the lighting out of the measurement -------------------------
+    #: The same shirt measures differently in sun and in the shadow of a
+    #: stand, which splits one team into two colour groups. The grass around
+    #: each player is used as a reference card to remove the lighting first.
+    normalize_illumination: bool = True
+    #: A correction beyond this factor means the reference was not grass; the
+    #: correction is dropped rather than inventing a colour.
+    illumination_max_gain: float = Field(default=2.0, gt=1.0)
+
+    # -- striped and hooped kits --------------------------------------------
+    #: A player is summarised by their *two* dominant torso colours: a single
+    #: average is meaningless for stripes and hoops (a red/blue kit averages
+    #: to a purple that matches neither, and shifts as the player turns).
+    #: A second colour closer than this, or rarer than the share below, is
+    #: treated as sponsor text or noise and collapsed into the first.
+    #: A second colour counts as a real pattern only if it differs clearly in
+    #: hue — a crease changes how bright fabric is, a stripe changes its
+    #: colour. Measured on the reference clip, a brightness-based test called
+    #: half the players striped in a match between two solid kits.
+    pattern_collapse_distance: float = Field(default=25.0, gt=0.0)
+    #: ...unless it differs this much in brightness, which is how black-and-
+    #: white stripes are told apart from a crease in a solid shirt.
+    pattern_lightness_distance: float = Field(default=35.0, gt=0.0)
+    pattern_min_share: float = Field(default=0.3, gt=0.0, le=0.5)
+    max_signature_pixels: int = Field(default=400, gt=0)
+    #: Down-weighting lightness looks right and measured worse: on the
+    #: reference clip it dropped kit separation from 58 to 43, because white
+    #: and maroon differ mostly in brightness. Lighting is fixed at the source
+    #: instead (normalize_illumination). Kept configurable for M2.8.
+    lightness_weight: float = Field(default=1.0, gt=0.0, le=1.0)
 
     # -- fitting the two kits ------------------------------------------------
     min_players_for_clustering: int = Field(default=6, ge=2)
@@ -412,6 +494,150 @@ class TeamAssignmentConfig(StrictModel):
     #: memory, so without this the labels can flip from frame to frame.
     persist_colors_across_frames: bool = True
 
+    # -- deciding once per player, not once per frame -----------------------
+    #: A player's team belongs to the person, not the frame. Measurements are
+    #: pooled against a short-lived identity and every frame votes, so one
+    #: blurred or half-occluded frame loses instead of deciding. Identities
+    #: come from box overlap until M2.4 provides real ones.
+    track_iou_threshold: float = Field(default=0.35, gt=0.0, le=1.0)
+    track_max_age_frames: int = Field(default=12, ge=0)
+    track_max_samples: int = Field(default=30, gt=0)
+
+    # -- when to ask the operator -------------------------------------------
+    #: The abstain thresholds. A player below any of these is flagged for
+    #: confirmation rather than reported as settled — the design target is
+    #: that residual error arrives as a question, never as a confident wrong
+    #: answer. Raise these to ask more often and be wrong less often.
+    vote_share_to_confirm: float = Field(default=0.75, ge=0.0, le=1.0)
+    confident_player_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    min_frames_to_trust: int = Field(default=3, ge=1)
+
+
+class PlayerIdentityConfig(StrictModel):
+    """Following players through the contact moment (M2.4).
+
+    Separate from `ai.tracker`, which stays tuned for M1's live preview. This
+    is the triggered offside path: it can afford appearance checks and a
+    longer memory, and it must be able to say "I could not tell" — something
+    the live tracker's interface cannot express.
+    """
+
+    enabled: bool = True
+
+    #: Box overlap needed to continue a track between frames.
+    match_iou: float = Field(default=0.3, ge=0.0, le=1.0)
+    #: How many frames a player may stay unmatched before their identity ends.
+    max_misses: int = Field(default=12, ge=0)
+    #: Frames of clean tracking before an identity is trusted on its own.
+    min_frames_to_confirm: int = Field(default=5, ge=1)
+
+    #: Kit colour is what stops a track being handed to the opponent who ran
+    #: across it. Beyond this colour distance the pairing is refused and the
+    #: player is flagged instead — a swap between kits is exactly the swap
+    #: that breaks an offside call.
+    appearance_max_distance: float = Field(default=30.0, gt=0.0)
+    appearance_memory: int = Field(default=20, gt=0)
+    #: When two tracks want the same player this closely and their kits match
+    #: (teammates), the association is reported as contested rather than
+    #: resolved by picking the likelier one.
+    ambiguous_iou_margin: float = Field(default=0.1, ge=0.0, le=1.0)
+
+    #: Re-identification after occlusion needs both a plausible position and
+    #: a matching kit; position alone would hand the id to whoever is standing
+    #: there now.
+    reid_max_frames: int = Field(default=20, ge=0)
+    reid_max_distance_boxes: float = Field(default=2.0, gt=0.0)
+
+    #: A gap this short is ordinary tracking, not a re-identification: the
+    #: detector drops a distant player for a frame constantly and the track
+    #: coasts one step. Measured on the reference clip, treating every gap as
+    #: a recovery left 11 of 18 players permanently flagged.
+    recovery_gap_frames: int = Field(default=2, ge=0)
+    #: How long doubt lingers after a recovery or a contested association, so
+    #: it does not vanish on the next clean frame.
+    doubt_frames: int = Field(default=5, ge=0)
+    miss_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
+
+    #: A camera cut ends every identity: nothing about the previous shot
+    #: constrains the next one, and carrying ids across invents continuity.
+    detect_camera_cuts: bool = True
+    cut_correlation_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    min_frames_between_cuts: int = Field(default=4, ge=0)
+
+
+class OffsideLineConfig(StrictModel):
+    """The line, the comparison, and when to refuse to call it (M2.5).
+
+    The important numbers here are the uncertainties. The geometry is a
+    comparison of two positions along one axis; what decides whether that
+    comparison is worth reporting is how far out the inputs could be. Set
+    these too low and the tool announces verdicts its own measurements cannot
+    support — which is the one failure this milestone is built to avoid.
+    """
+
+    enabled: bool = True
+
+    #: Fixed cost of the calibration itself, before any player is measured.
+    metric_base_uncertainty_m: float = Field(default=0.15, ge=0.0)
+    #: How wrong a *fully unconfident* body point may be. Scaled by how much
+    #: M2.2 actually trusted the point, and counted once for the attacker and
+    #: once for the defender, since both are being measured.
+    metric_foot_uncertainty_m: float = Field(default=0.6, ge=0.0)
+    #: Without metres the axis is in pixels, so a player's own height is the
+    #: only available scale — and a good one, since it shrinks with distance
+    #: exactly as the measurement error does.
+    directional_uncertainty_boxes: float = Field(default=0.35, ge=0.0)
+
+    #: How far apart the two sides' averages must be before their shape is
+    #: accepted as evidence of which end is being defended.
+    min_team_separation_m: float = Field(default=3.0, ge=0.0)
+    min_team_separation_px: float = Field(default=40.0, ge=0.0)
+
+    #: Law 11 requires the attacker to be nearer the goal line than the ball as
+    #: well as the second-last opponent. Leaving the ball out is a mistake a
+    #: geometry-only tool makes constantly.
+    require_beyond_ball: bool = True
+
+    #: Below this, the stage refuses to report the verdict at all. The geometry
+    #: can be exact and the answer still worthless: measured on the reference
+    #: clip, a frame with the teams mixed together produced "offside by 14.6m"
+    #: at a confidence of 0.08, because which end was being defended was barely
+    #: more than a guess. A precise number beside a confidence that low is the
+    #: confident-and-wrong output this milestone exists to avoid.
+    min_confidence_to_call: float = Field(default=0.35, ge=0.0, le=1.0)
+
+
+class DecisionSupportConfig(StrictModel):
+    """Confidence banding and when to publish a verdict at all (M2.6).
+
+    These thresholds decide what the tool says in its own voice. They are set
+    cautiously on purpose: the cost of a band that is too careful is that the
+    operator opens the frame; the cost of one that is too generous is a wrong
+    call published as the tool's own conclusion.
+    """
+
+    enabled: bool = True
+
+    #: "High" has to mean the operator can sign the call without opening the
+    #: frame, so it sits well above a coin flip.
+    high_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    #: Below this the call is shown as a suggestion to be judged by eye.
+    medium_confidence: float = Field(default=0.45, ge=0.0, le=1.0)
+
+    #: Below this a yes/no verdict is withheld entirely and the weakest stage
+    #: is named instead. Deliberately a little above M2.5's own floor, because
+    #: this stage sees inputs M2.5 never does — drifted pitch marks, contested
+    #: identities, unconfirmed kit colours — each of which produces a decision
+    #: that looks entirely normal and is wrong. Abstentions ("too close to
+    #: call") are never withheld: a weak chain cannot make an abstention wrong.
+    min_confidence_to_publish: float = Field(default=0.4, ge=0.0, le=1.0)
+
+    #: How many caveats and suggested fixes to show. A list nobody reads is
+    #: the same as no list, so the weakest few are shown and the rest stay in
+    #: the signal rows.
+    max_limits: int = Field(default=3, ge=1, le=10)
+    max_actions: int = Field(default=3, ge=1, le=10)
+
 
 class OffsideConfig(StrictModel):
     """Milestone 2 settings. Later phases (decision support) add their
@@ -422,6 +648,11 @@ class OffsideConfig(StrictModel):
         default_factory=PitchCalibrationConfig
     )
     team_assignment: TeamAssignmentConfig = Field(default_factory=TeamAssignmentConfig)
+    player_identity: PlayerIdentityConfig = Field(default_factory=PlayerIdentityConfig)
+    offside_line: OffsideLineConfig = Field(default_factory=OffsideLineConfig)
+    decision_support: DecisionSupportConfig = Field(
+        default_factory=DecisionSupportConfig
+    )
 
 
 # --------------------------------------------------------------------------
