@@ -39,6 +39,7 @@ GRASS = (50, 130, 60)
 RED_KIT = (40, 40, 200)
 BLUE_KIT = (200, 60, 40)
 KEEPER_KIT = (180, 60, 180)  # purple: outside the grass hue window
+CROWD_KIT = (90, 90, 90)  # plain grey — a spectator's clothing, not a kit
 NEAR_RED_KIT = (45, 48, 190)  # a red that a human would struggle to tell apart
 
 FRAME_SIZE = (720, 1280)
@@ -259,9 +260,28 @@ class TestClustering:
         assert counts[TEAM_B] == 6
         assert assignment.by_index(len(poses) - 1).team_id is None
 
-    def test_too_few_players_is_a_refusal_not_a_guess(self, assigner):
+    def test_two_players_is_the_floor_not_a_refusal(self, assigner):
+        """2 is the mathematical minimum for a 2-means fit (one point per
+        kit) and is the deliberate default — this used to refuse outright
+        with as many as 5 usable colours, which was a cliff-edge well above
+        where the maths actually requires one. At the floor, a fit is
+        attempted and comes out honestly low-confidence via
+        `confident_player_count`, not confidently blank."""
         image = make_scene()
         poses = [add_player(image, 400, 400, RED_KIT), add_player(image, 500, 400, BLUE_KIT)]
+
+        assignment = assigner.assign(image, poses)
+
+        assert assignment.color_model is not None
+        assert assignment.color_model.confidence < 0.5, "2 samples must read as thin evidence"
+        assert {p.team_id for p in assignment.players} == {TEAM_A, TEAM_B}
+
+    def test_below_the_mathematical_floor_is_still_a_refusal(self, assigner):
+        """A single usable colour cannot define two clusters at all — no
+        amount of "attempt it and score it low" logic changes that; this is
+        the one genuine floor left."""
+        image = make_scene()
+        poses = [add_player(image, 400, 400, RED_KIT)]
 
         assignment = assigner.assign(image, poses)
 
@@ -479,6 +499,37 @@ class TestGoalkeeper:
         )
 
         assert len(assignment.goalkeepers()) == 1
+
+    def test_a_crowd_detection_far_outside_the_pitch_is_not_called_the_goalkeeper(
+        self, assigner
+    ):
+        """The failure this guard exists for: a generic person detector fires
+        on a spectator or steward as readily as on a keeper, and — wearing an
+        odd kit and standing outside the pitch entirely — that detection
+        projects to the single most extreme point on the goal-to-goal axis,
+        more extreme than any real keeper. Without a pitch-bounds check it
+        would win the ranking outright."""
+        image, poses = two_team_scene()
+        crowd = add_player(image, 1250, 400, CROWD_KIT)  # 125m — well past the touchline
+        poses.append(crowd)
+
+        assignment = assigner.assign(image, poses, calibration=FakeMetricCalibration())
+
+        assert assignment.goalkeepers() == []
+        assert any(
+            "outside the pitch" in warning for warning in assignment.warnings
+        )
+
+    def test_the_real_goalkeeper_still_wins_over_a_crowd_detection(self, assigner):
+        image, poses = two_team_scene(keeper=KEEPER_KIT)
+        crowd = add_player(image, 1250, 400, CROWD_KIT)  # 125m — off the pitch
+        poses.append(crowd)
+
+        assignment = assigner.assign(image, poses, calibration=FakeMetricCalibration())
+
+        keepers = assignment.goalkeepers()
+        assert len(keepers) == 1
+        assert keepers[0].index == len(poses) - 2  # the real keeper, not the crowd
 
 
 class TestAttackingSide:

@@ -325,65 +325,102 @@ QWidget#OnVideoBadge {{
     border-radius: {t.RADIUS_BADGE}px;
 }}
 
-/* ---------- bottom transport bar (Live Grid, Spotify-style) ---------- */
-QFrame#TransportBar {{
+/* ---------- bottom transport bar & review control deck ---------- */
+QFrame#ReviewControlDeck {{
     background-color: {t.BG_SURFACE};
     border: 1px solid {t.BORDER};
-    border-radius: {t.RADIUS_PILL}px;
+    border-radius: {t.RADIUS_PANEL}px;
+    padding: 2px 4px;
+}}
+
+QFrame#TransportBar {{
+    background-color: {t.BG_BASE};
+    border: 1px solid {t.BORDER};
+    border-radius: 18px;
+    padding: 2px 4px;
 }}
 
 QPushButton#TransportButton {{
     background-color: transparent;
-    border: 1px solid {t.BORDER};
-    border-radius: {t.RADIUS_PILL}px;
+    border: 1px solid transparent;
+    border-radius: 14px;
     color: {t.TEXT_MAIN};
     font-weight: {t.WEIGHT_SEMIBOLD};
-    font-size: {t.FONT_SIZE_BUTTON}px;
-    padding: 8px 18px;
+    font-size: 13px;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 3px 10px;
 }}
 
 QPushButton#TransportButton:hover {{
-    background-color: {t.PRIMARY_BG};
-    border-color: {t.PRIMARY};
-    color: {t.PRIMARY};
+    background-color: {t.BG_SURFACE_2};
+    border-color: {t.BORDER_STRONG};
+    color: {t.TEXT_PRIMARY};
 }}
 
-/* BEST sits centered among the camera buttons, Spotify play-button style:
-   the one filled-feeling control in the whole system, via a bright primary
-   outline + tint rather than breaking the no-solid-fill rule outright. */
+QPushButton#TransportButton:pressed {{
+    background-color: {t.PRIMARY_BG};
+    border-color: {t.PRIMARY};
+}}
+
+/* BEST sits centered among the transport buttons:
+   Modern glowing accent pill */
 QPushButton#TransportButton[best="true"] {{
-    border: 1px solid {t.PRIMARY};
+    border: 1.5px solid {t.PRIMARY};
     color: {t.TEXT_PRIMARY};
     background-color: {t.PRIMARY_BG};
-    padding: 10px 26px;
+    font-weight: {t.WEIGHT_SEMIBOLD};
+    border-radius: 14px;
+    padding: 3px 14px;
 }}
 
 QPushButton#TransportButton[best="true"]:hover {{
     background-color: {t.PRIMARY_BG_HOVER};
+    border-color: {t.PRIMARY_BORDER};
+    color: #ffffff;
 }}
 
-/* ---------- candidate rows ---------- */
+/* ---------- candidate rows (horizontal pills) ---------- */
 QWidget#CandidateRow {{
-    background-color: transparent;
-    border-left: 2px solid transparent;
-    border-radius: 0px;
+    background-color: {t.BG_BASE};
+    border: 1px solid {t.BORDER};
+    border-radius: 12px;
+    padding: 2px 8px;
 }}
 
 QWidget#CandidateRow:hover {{
     background-color: {t.BG_SURFACE_2};
+    border-color: {t.PRIMARY};
 }}
 
-/* Selected row: primary tint plus a square 2px left border (theme.md §5). */
+/* Selected candidate pill */
 QWidget#CandidateRow[selected="true"] {{
+    background-color: {t.PRIMARY_BG};
+    border: 1.5px solid {t.PRIMARY};
+}}
+
+/* ---------- offside review (M2.7) ---------- */
+QProgressBar#OffsideProgressBar {{
+    background-color: {t.BG_BASE};
+    border: none;
+    border-radius: 1px;
+}}
+
+QProgressBar#OffsideProgressBar::chunk {{
+    background-color: {t.PRIMARY};
+    border-radius: 1px;
+}}
+
+QWidget#StageChecklistRow {{
+    background-color: transparent;
+    border-radius: {t.RADIUS_CONTROL}px;
+}}
+
+QWidget#StageChecklistRow[running="true"] {{
     background-color: {t.PRIMARY_BG};
     border-left: 2px solid {t.PRIMARY};
 }}
 
-/* ---------- offside review (M2.7) ---------- */
-/* The selected override reads as *chosen by a person*, so it uses the same
-   primary fill the app gives a deliberate selection everywhere else — the
-   operator must be able to see at a glance that the call on screen is
-   theirs and not the tool's. */
 QPushButton[selected="true"] {{
     background-color: {t.PRIMARY_BG_HOVER};
     border: 1px solid {t.PRIMARY};
@@ -413,13 +450,36 @@ QLabel#VerdictWord {{
     color: {t.TEXT_PRIMARY};
 }}
 
-/* A tinted card, not another paragraph — actionable next steps set visually
-   apart, the same left-accent language the app already uses for "this is a
-   deliberate selection" (see the override buttons and CandidateRow above). */
+/* Prominent Suggestions Box */
 QWidget#SuggestionBox {{
+    background-color: rgba(35, 55, 40, 0.55);
+    border: 1px solid rgba(0, 255, 102, 0.35);
+    border-left: 3px solid {t.SUCCESS};
+    border-radius: {t.RADIUS_PANEL}px;
+}}
+
+QLabel#SuggestionItem {{
+    color: {t.TEXT_PRIMARY};
+    font-size: {t.FONT_SIZE_BODY}px;
+}}
+
+/* Prominent Why & Reasoning Card */
+QFrame#ReasoningBox {{
     background-color: {t.PRIMARY_BG};
-    border-left: 2px solid {t.PRIMARY_BORDER};
-    border-radius: {t.RADIUS_CONTROL}px;
+    border: 1px solid {t.PRIMARY_BORDER};
+    border-left: 3px solid {t.PRIMARY};
+    border-radius: {t.RADIUS_PANEL}px;
+}}
+
+QLabel#ReasonHeadline {{
+    color: {t.TEXT_PRIMARY};
+    font-weight: {t.WEIGHT_SEMIBOLD};
+    font-size: {t.FONT_SIZE_BODY}px;
+}}
+
+QLabel#ReasonDetail {{
+    color: {t.TEXT_MUTED};
+    font-size: {t.FONT_SIZE_DATA}px;
 }}
 
 /* ---------- dividers ---------- */
@@ -462,6 +522,13 @@ QLabel#HelpStepBadge {{
     font-family: "{t.FONT_FAMILY_DATA}";
     font-weight: {t.WEIGHT_SEMIBOLD};
     font-size: {t.FONT_SIZE_DATA}px;
+}}
+
+QFrame#StorySpine {{
+    background-color: {t.BORDER};
+    border: none;
+    max-width: 1px;
+    min-width: 1px;
 }}
 
 QFrame#DisclaimerBanner {{

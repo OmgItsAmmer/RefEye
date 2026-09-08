@@ -26,6 +26,7 @@ from offside.decision_support.explanation import (
     operator_decision,
 )
 from offside.decision_support.signals import (
+    ATTACKING_SIDE,
     BODY_POINTS,
     GEOMETRY,
     IDENTITY,
@@ -36,7 +37,14 @@ from offside.decision_support.signals import (
 from offside.offside_line.axis import AttackDirection
 from offside.offside_line.line import AttackerComparison, OffsideDecision, Verdict
 from offside.second_last_defender.ranking import RankedPlayer
-from offside.team_assignment.teams import TEAM_A, TEAM_B, PlayerRole, PlayerTeam, TeamAssignment
+from offside.team_assignment.teams import (
+    TEAM_A,
+    TEAM_B,
+    PlayerRole,
+    PlayerTeam,
+    TeamAssignment,
+    TeamColorModel,
+)
 
 # -- fakes ------------------------------------------------------------------
 #
@@ -86,7 +94,26 @@ def pose(confidence: float = 0.9, measured: bool = True) -> FakePose:
     )
 
 
-def make_teams(*, confidence=0.9, unsure=0, known=True) -> TeamAssignment:
+def make_color_model(confidence: float = 0.9) -> TeamColorModel:
+    return TeamColorModel(
+        centroids={TEAM_A: (20.0, 10.0, 10.0), TEAM_B: (70.0, -5.0, -5.0)},
+        swatches={TEAM_A: (40, 40, 200), TEAM_B: (220, 220, 220)},
+        spreads={TEAM_A: 8.0, TEAM_B: 9.0},
+        separation=50.0,
+        outlier_threshold=30.0,
+        sample_count=10,
+        confidence=confidence,
+    )
+
+
+def make_teams(
+    *, confidence=0.9, unsure=0, known=True, color_model=True, color_confidence=None
+) -> TeamAssignment:
+    """`confidence` and `color_confidence` are deliberately separate knobs —
+    that split is the whole point of the M2.3 signal fix: whether the two
+    kits were told apart is not the same question as whether the attacking
+    side is known, and a test fixture that conflated them would hide exactly
+    the bug it exists to catch."""
     players = [
         PlayerTeam(
             index=i,
@@ -103,8 +130,14 @@ def make_teams(*, confidence=0.9, unsure=0, known=True) -> TeamAssignment:
         player.needs_confirmation = True
     return TeamAssignment(
         players=players,
+        color_model=(
+            make_color_model(color_confidence if color_confidence is not None else confidence)
+            if color_model
+            else None
+        ),
         attacking_team_id=TEAM_A if known else None,
         confidence=confidence,
+        warnings=[] if known else ["which side is attacking has not been established"],
     )
 
 
@@ -320,10 +353,25 @@ def test_unconfirmed_teams_cap_the_team_signal():
     assert "confirm" in result.signal(TEAMS).action
 
 
-def test_unknown_sides_block_the_team_signal():
+def test_unknown_sides_block_the_attacking_side_signal_not_team_colours():
+    """The bug this split fixes, made concrete: a frame where the kits are
+    read perfectly cleanly but nobody is near the ball must not report
+    "team colours" as the thing that failed — an operator sent to recheck
+    kit colours on a frame where they were already fine is being misled by
+    the tool's own explanation."""
     result = explain(teams=make_teams(known=False))
-    assert result.signal(TEAMS).blocking
+    assert not result.signal(TEAMS).blocking
+    assert result.signal(TEAMS).score >= 0.8, "kit colours were fine and must read that way"
+    assert result.signal(ATTACKING_SIDE).blocking
     assert result.verdict is Verdict.INCONCLUSIVE
+
+
+def test_a_kit_clustering_failure_still_blocks_team_colours():
+    """The other half: when the kits genuinely couldn't be told apart, that
+    is a real team-colour failure and must still be reported as one."""
+    result = explain(teams=make_teams(color_model=False))
+    assert result.signal(TEAMS).blocking
+    assert "could not be told apart" in result.signal(TEAMS).reason
 
 
 def test_a_contested_identity_matters_more_when_it_is_one_of_our_two():
@@ -384,7 +432,7 @@ def test_every_stage_appears_even_when_it_is_fine():
     """A panel that only lists problems cannot be used to check that the good
     stages are actually good."""
     keys = {signal.key for signal in explain().signals}
-    assert keys == {PITCH, BODY_POINTS, TEAMS, IDENTITY, GEOMETRY}
+    assert keys == {PITCH, BODY_POINTS, TEAMS, ATTACKING_SIDE, IDENTITY, GEOMETRY}
 
 
 # -- the prose --------------------------------------------------------------

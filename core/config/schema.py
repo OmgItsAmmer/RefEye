@@ -342,6 +342,37 @@ class CalibrationFollowConfig(StrictModel):
     exclude_box_margin: float = Field(default=0.25, ge=0.0, le=1.0)
 
 
+class AutoLandmarkConfig(StrictModel):
+    """Automatic pitch-landmark detection — the METRIC path with nobody at
+    the mouse (extends M2.1 past the plan).
+
+    Runs a keypoint model (a football-pitch-specific one — see
+    `models/pitch_keypoints/README.md`) that finds the same corner points an
+    operator would otherwise click by hand, then feeds them through the
+    identical homography solve manual marking uses. Validated against real
+    footage before being wired in: three different broadcast clips, all
+    reaching 0.90+ fit confidence with the projected pitch lines landing
+    within centimetres of the real painted ones (see the module docstring in
+    `offside/pitch_calibration/auto_landmarks.py` for the measurements).
+    """
+
+    enabled: bool = True
+    checkpoint: str = "./models/pitch_keypoints/soccana_keypoint.pt"
+    imgsz: int = Field(default=640, gt=0)
+    #: Below this, a keypoint is "the model wasn't sure" and is left out
+    #: rather than trusted — matches the model's own published threshold.
+    visibility_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    #: The underlying pitch-instance detector's own confidence bar — loose,
+    #: since there is only ever one pitch and this exists to gate a mostly
+    #: pointless prediction on a frame with no field visible at all.
+    detection_confidence: float = Field(default=0.25, ge=0.0, le=1.0)
+    #: Fewer confident points than this and the result is discarded even
+    #: though 4 is the mathematical minimum — extra points are what let
+    #: `solve_homography`'s own RANSAC step catch a single mislabelled one
+    #: rather than being forced to trust every point it's given.
+    min_points: int = Field(default=6, ge=4)
+
+
 class PitchCalibrationConfig(StrictModel):
     """Mapping the camera view onto the pitch (M2.1)."""
 
@@ -369,6 +400,7 @@ class PitchCalibrationConfig(StrictModel):
         default_factory=PitchLineDetectionConfig
     )
     follow: CalibrationFollowConfig = Field(default_factory=CalibrationFollowConfig)
+    auto_landmarks: AutoLandmarkConfig = Field(default_factory=AutoLandmarkConfig)
 
 
 class TeamAssignmentConfig(StrictModel):
@@ -444,7 +476,23 @@ class TeamAssignmentConfig(StrictModel):
     lightness_weight: float = Field(default=1.0, gt=0.0, le=1.0)
 
     # -- fitting the two kits ------------------------------------------------
-    min_players_for_clustering: int = Field(default=6, ge=2)
+    #: The mathematical floor is 2 — a 2-means fit needs at least one point
+    #: per cluster — and that floor is the default. This used to be a
+    #: cliff-edge refusal set well above the floor (6): below it, the stage
+    #: reported "the two kits could not be told apart" and produced nothing
+    #: at all, even when 4 or 5 usable colours genuinely would have been
+    #: enough to attempt a fit. That was inconsistent with how every other
+    #: number in this module works — `confident_player_count` below already
+    #: scales *confidence* down smoothly as evidence thins, rather than
+    #: refusing outright, and a thin fit here gets exactly that treatment:
+    #: `fit_team_colors`'s own confidence formula includes
+    #: `len(usable) / confident_player_count`, so 2 or 3 samples already
+    #: come out low-confidence on their own, and the M2.6 publish floor
+    #: catches anything that slips through with too little evidence to
+    #: trust. A hard gate above the mathematical minimum was refusing to
+    #: even try what the rest of the pipeline is already built to handle
+    #: honestly.
+    min_players_for_clustering: int = Field(default=2, ge=2)
     #: Player count at which the fit is considered well-evidenced; fewer
     #: caps the stage's confidence proportionally.
     confident_player_count: int = Field(default=10, gt=0)
@@ -480,6 +528,21 @@ class TeamAssignmentConfig(StrictModel):
     #: How many players deep to look at each end — a defender dropping
     #: goal-side of the keeper is ordinary football, not a failure.
     goalkeeper_search_depth: int = Field(default=2, ge=1)
+    #: A generic person detector fires on the crowd, stewards and photographers
+    #: as readily as on a goalkeeper, and those detections are exactly the ones
+    #: most likely to look like a goalkeeper to the ranking below: they wear a
+    #: kit that matches neither team (a real "odd colour") and, being outside
+    #: the pitch entirely, project to the single most extreme point along the
+    #: goal-to-goal axis — more extreme than any real keeper standing near
+    #: their own goal line. With metric calibration this margin is used with
+    #: `PitchModel.contains()` to disqualify a candidate that projects this far
+    #: (in metres) beyond the touchline/goal line before it is ever ranked.
+    #: Generous on purpose — a keeper standing in the technical area for a
+    #: throw-in, or just wide for a corner, must not be excluded by this.
+    #: Without metric calibration there is no pitch-space position to check,
+    #: so this has no effect (same "cannot claim what cannot be measured" rule
+    #: as the rest of this stage).
+    goalkeeper_pitch_margin_m: float = Field(default=8.0, gt=0.0)
 
     # -- which side is attacking --------------------------------------------
     #: Distance from the ball to the nearest player, in multiples of that
@@ -563,6 +626,53 @@ class PlayerIdentityConfig(StrictModel):
     detect_camera_cuts: bool = True
     cut_correlation_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     min_frames_between_cuts: int = Field(default=4, ge=0)
+
+    #: Compensates a track's predicted box for the camera's own pan/tilt/zoom
+    #: before overlap is measured, using the same homography-from-optical-flow
+    #: technique `offside.pitch_calibration.tracking.CalibrationFollower`
+    #: already uses to carry pitch marks across a moving shot
+    #: (`vision/tracking/camera_motion.py`). Without it, a pan reads as every
+    #: player having moved at once, which is the single biggest source of
+    #: broken association at broadcast frame rates — far bigger than any
+    #: player's own motion between two adjacent frames.
+    camera_motion_compensation: bool = True
+    #: Below this many surviving tracked features, re-detect from scratch
+    #: rather than keep registering against a thinning set — mirrors
+    #: `PitchCalibrationConfig.follow.redetect_below`.
+    camera_motion_redetect_below: int = Field(default=120, ge=0)
+
+    #: A general appearance signal (build, posture, boots — not colour; see
+    #: `offside/player_identity/appearance_embedding.py`) alongside the
+    #: kit-colour veto. Strictly one-directional, exactly like colour: it can
+    #: refuse a pairing IoU and colour both accepted, but it never clears a
+    #: doubt they raised. A crop this close to another player is exactly the
+    #: crowded case where a neighbour's own pixels can bleed into the box
+    #: edge — measured directly, on a synthetic two-teammate crossing, at
+    #: 87% box overlap: a confident-looking embedding match there turned out
+    #: to be reading the *other* player's leftover pixels, not this one's.
+    #: Letting embeddings positively resolve an ambiguity the box already
+    #: flagged would have made that kind of contamination look like proof.
+    use_appearance_embedding: bool = True
+    #: The `timm` backbone used as a general appearance feature extractor —
+    #: see `appearance_embedding.py` for why an ImageNet classifier rather
+    #: than a purpose-trained ReID checkpoint. Swappable without touching any
+    #: caller: everything downstream only depends on an L2-normalised vector
+    #: coming back.
+    embedding_model: str = "mobilenetv3_small_100"
+    embedding_crop_height: int = Field(default=128, gt=0)
+    embedding_crop_width: int = Field(default=64, gt=0)
+    #: How many recent embeddings a track keeps to form its own signature —
+    #: shorter than kit-colour's memory on purpose: a general appearance
+    #: embedding is more sensitive to pose and viewing angle than a colour
+    #: swatch is, so an old measurement from a very different pose ages out
+    #: sooner.
+    embedding_memory: int = Field(default=10, gt=0)
+    #: Distance beyond which a re-identification candidate is refused outright
+    #: — an extra veto alongside kit colour in `_recover_lost`, where "this
+    #: really is the same player" matters more than usual (occlusion is
+    #: exactly when a teammate can end up standing where the hidden player
+    #: was). In the same L2 units as two unit-normalised vectors (max 2.0).
+    embedding_max_distance: float = Field(default=0.9, gt=0.0)
 
 
 class OffsideLineConfig(StrictModel):
@@ -670,6 +780,23 @@ class RuntimeConfig(StrictModel):
 # --------------------------------------------------------------------------
 # logging / persistence
 # --------------------------------------------------------------------------
+class PipelineRunLogConfig(StrictModel):
+    """One detailed JSON file per offside pipeline run (extends M2.7).
+
+    Separate from the firehose session log (`logs/session_<id>.jsonl`, every
+    subsystem interleaved — video buffering, model loading, UI events, every
+    triggered run, all in one growing file). That file answers "what did
+    this session do"; this answers "what happened on *this* frame" — every
+    stage's state, its full detail lines, how long it took, and the final
+    verdict's confidence chain, as one self-contained file a developer or an
+    agent can open in isolation rather than grep out of megabytes of
+    unrelated log lines.
+    """
+
+    enabled: bool = True
+    directory: str = "./logs/CLI"
+
+
 class LoggingConfig(StrictModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
     directory: str
@@ -677,6 +804,7 @@ class LoggingConfig(StrictModel):
     console: bool
     rotation_max_bytes: int = Field(default=10_485_760, gt=0)
     rotation_backup_count: int = Field(default=5, ge=0)
+    pipeline_run_log: PipelineRunLogConfig = Field(default_factory=PipelineRunLogConfig)
 
 
 class PersistenceConfig(StrictModel):

@@ -48,7 +48,13 @@ from offside.team_assignment.teams import TEAM_IDS, JerseyColor, TeamColorModel
 def fit_team_colors(
     colors: list[JerseyColor],
     *,
-    min_samples: int = 6,
+    #: 2 is the mathematical floor — a 2-means fit needs at least one point
+    #: per cluster. Below that many usable colours, this refuses outright
+    #: (see the guard below); at or above it, a thin sample is not refused,
+    #: it just comes out low-confidence via `confident_samples` further down
+    #: — the same "degrade honestly, don't refuse" rule the rest of this
+    #: module already follows for outliers and pattern detection.
+    min_samples: int = 2,
     confident_samples: int = 10,
     min_sample_confidence: float = 0.25,
     outlier_mad_scale: float = 3.0,

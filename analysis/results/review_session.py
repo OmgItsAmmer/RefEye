@@ -61,6 +61,23 @@ class ReviewStrip:
     def total_bytes(self) -> int:
         return sum(len(data) for data in self._frames.values())
 
+    def frames_before(self, frame_id: int) -> list[tuple[int, np.ndarray]]:
+        """Every held frame strictly earlier than `frame_id`, oldest first.
+
+        For the offside pipeline's identity-tracking warm-up
+        (`OffsidePipeline.warm_up`): the strip already holds exactly the
+        run-up to a confirm, so no second trip to the live buffer is needed.
+        """
+        frames = []
+        for earlier_id in self._ordered:
+            if earlier_id >= frame_id:
+                break
+            buffer = np.frombuffer(self._frames[earlier_id], dtype=np.uint8)
+            image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+            if image is not None:
+                frames.append((earlier_id, image))
+        return frames
+
 
 class ReviewSession:
     """Everything the review UI needs, decoupled from the live buffer."""

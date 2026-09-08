@@ -60,6 +60,7 @@ import numpy as np
 from core.errors.exceptions import ConfigurationError
 from observability.logging.setup import get_logger
 from offside.body_keypoints.keypoints import PlayerPose
+from offside.field_geometry.pitch import PitchModel
 from offside.team_assignment.clustering import fit_team_colors
 from offside.team_assignment.tracks import TrackRegistry
 from offside.team_assignment.jersey_color import (
@@ -215,7 +216,8 @@ class TeamAssigner:
         self,
         *,
         extractor: TeamFeatureExtractor | None = None,
-        min_samples: int = 6,
+        pitch: PitchModel | None = None,
+        min_samples: int = 2,
         confident_samples: int = 10,
         min_sample_confidence: float = 0.25,
         outlier_mad_scale: float = 3.0,
@@ -230,6 +232,7 @@ class TeamAssigner:
         goalkeeper_min_gap_m: float = 5.0,
         goalkeeper_min_gap_fraction: float = 0.12,
         goalkeeper_search_depth: int = 2,
+        goalkeeper_pitch_margin_m: float = 8.0,
         ball_max_distance_boxes: float = 1.5,
         ball_ambiguous_ratio: float = 1.25,
         persist_colors_across_frames: bool = True,
@@ -241,6 +244,13 @@ class TeamAssigner:
         min_frames_to_trust: int = 3,
     ):
         self._extractor = extractor or JerseyColorExtractor()
+        #: Falls back to a standard 105x68m pitch rather than None, so the
+        #: off-pitch guard in `_off_pitch_outliers` protects goalkeeper
+        #: identification even for a caller that never wired a `PitchModel`
+        #: through — the same "safe by default" reasoning `PitchCalibrator`
+        #: already uses for its own pitch dimensions.
+        self._pitch = pitch or PitchModel()
+        self._goalkeeper_pitch_margin_m = goalkeeper_pitch_margin_m
         self._tracks = TrackRegistry(
             iou_threshold=track_iou_threshold,
             max_age_frames=track_max_age_frames,
@@ -274,7 +284,9 @@ class TeamAssigner:
         self._last_model: TeamColorModel | None = None
 
     @classmethod
-    def from_config(cls, config, *, grass_hue_range=None, grass_min_saturation=None):
+    def from_config(
+        cls, config, *, pitch: PitchModel | None = None, grass_hue_range=None, grass_min_saturation=None
+    ):
         """Build from `settings.offside.team_assignment`.
 
         The grass window is passed in rather than duplicated in this section:
@@ -314,6 +326,7 @@ class TeamAssigner:
         )
         return cls(
             extractor=extractor,
+            pitch=pitch,
             min_samples=config.min_players_for_clustering,
             confident_samples=config.confident_player_count,
             min_sample_confidence=config.min_sample_confidence,
@@ -329,6 +342,7 @@ class TeamAssigner:
             goalkeeper_min_gap_m=config.goalkeeper_min_gap_m,
             goalkeeper_min_gap_fraction=config.goalkeeper_min_gap_fraction,
             goalkeeper_search_depth=config.goalkeeper_search_depth,
+            goalkeeper_pitch_margin_m=config.goalkeeper_pitch_margin_m,
             ball_max_distance_boxes=config.ball_max_distance_boxes,
             ball_ambiguous_ratio=config.ball_ambiguous_ratio,
             persist_colors_across_frames=config.persist_colors_across_frames,
@@ -595,6 +609,8 @@ class TeamAssigner:
             )
             return
 
+        off_pitch = self._off_pitch_outliers(outliers, calibration)
+
         ranked = sorted(
             (p for p in assignment.players if p.depth is not None),
             key=lambda p: p.depth,
@@ -610,7 +626,7 @@ class TeamAssigner:
         )
 
         for end, ordered in (("near", ranked), ("far", list(reversed(ranked)))):
-            keeper = self._goalkeeper_at_end(ordered, gap_needed)
+            keeper = self._goalkeeper_at_end(ordered, gap_needed, off_pitch)
             if keeper is None:
                 continue
             player, rank, gap = keeper
@@ -626,17 +642,55 @@ class TeamAssigner:
             # is still asked before this feeds a verdict.
             player.needs_confirmation = True
 
+        if off_pitch:
+            assignment.warnings.append(
+                f"{len(off_pitch)} detection(s) with an odd kit colour projected well "
+                "outside the pitch — most likely a spectator, steward or photographer "
+                "picked up by the person detector — and were excluded from goalkeeper "
+                "identification"
+            )
+
+    def _off_pitch_outliers(
+        self, outliers: list[PlayerTeam], calibration
+    ) -> set[int]:
+        """Which odd-kit players are too far outside the pitch to be a keeper.
+
+        A person detector fires on the crowd as readily as on a goalkeeper, and
+        a crowd member is exactly the case the gap check below cannot catch on
+        its own: standing outside the pitch entirely, they project to the most
+        extreme point along the goal-to-goal axis of anyone in the frame — more
+        extreme than a real keeper standing near their own goal line — so
+        without this check they would *win* the ranking, not lose it.
+        """
+        if calibration is None or not calibration.is_metric:
+            return set()
+
+        disqualified: set[int] = set()
+        for player in outliers:
+            position = calibration.to_pitch([player.anchor_xy])
+            if position is None or not np.all(np.isfinite(position)):
+                continue
+            if not self._pitch.contains(
+                tuple(position[0]), margin=self._goalkeeper_pitch_margin_m
+            ):
+                disqualified.add(player.index)
+        return disqualified
+
     def _goalkeeper_at_end(
-        self, ordered: list[PlayerTeam], gap_needed: float
+        self, ordered: list[PlayerTeam], gap_needed: float, off_pitch: set[int]
     ) -> tuple[PlayerTeam, int, float] | None:
         """The outlier standing alone at this end, if there is one.
 
         Searched a couple of players deep, because a defender dropping goal-side
-        of the keeper is ordinary football, not a failure.
+        of the keeper is ordinary football, not a failure. `off_pitch` skips
+        candidates disqualified by `_off_pitch_outliers` without ending the
+        search there — the real keeper may be the next one in.
         """
         for rank in range(min(self._goalkeeper_search_depth, len(ordered) - 1)):
             candidate = ordered[rank]
             if candidate.team_id is not None or candidate.role is PlayerRole.GOALKEEPER:
+                continue
+            if candidate.index in off_pitch:
                 continue
             following = ordered[rank + 1]
             gap = abs(following.depth - candidate.depth)

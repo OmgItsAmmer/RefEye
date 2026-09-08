@@ -234,6 +234,98 @@ class TestOcclusion:
         assert result.identities[0].state is IdentityState.TENTATIVE
 
 
+class ScriptedEmbedder:
+    """Returns embeddings by explicit script instead of reading real pixels.
+
+    Full control over what "the same visual identity" means, so these tests
+    are not confounded by the real risk `appearance_embedding.py` documents:
+    a crowded box's crop can be contaminated by a neighbour's own pixels,
+    which is exactly the kind of thing a synthetic scene of solid-colour
+    rectangles can accidentally reproduce (found the hard way — see the
+    veto-not-resolve design this module settled on).
+    """
+
+    def __init__(self):
+        self.script: list[np.ndarray] | None = None
+
+    def extract_batch(self, image, poses):
+        assert self.script is not None and len(self.script) == len(poses)
+        vectors, self.script = self.script, None
+        return vectors
+
+
+VECTOR_A = np.array([1.0, 0.0])
+VECTOR_B = np.array([0.0, 1.0])  # orthogonal: as different as two unit vectors get
+
+
+class TestAppearanceEmbeddingVeto:
+    """Kit colour cannot tell two same-team players apart by design. The
+    embedding is the extra signal that sometimes still can — but only ever
+    as a veto (see `PlayerIdentityConfig.use_appearance_embedding`), never
+    as a way to positively resolve a doubt colour or position already
+    raised."""
+
+    def test_a_recovery_needs_the_embedding_to_match_too(self):
+        """Position and kit colour alone would hand a reappearing identity
+        to whoever is standing nearby — even a teammate. This is the extra
+        check for "this really is the same player", not just "the right
+        colour, roughly where expected"."""
+        embedder = ScriptedEmbedder()
+        tracker = IdentityTracker(detect_camera_cuts=False, embedding_extractor=embedder)
+
+        for step in range(6):
+            embedder.script = [VECTOR_A]
+            run(tracker, [(300 + step * 10, 400, RED_KIT)], step)
+        for hidden in range(6, 9):
+            tracker.update(frame_of(make_scene(), hidden), [])
+
+        # Same kit, a plausible position for the hidden player to have
+        # reached — but a different build entirely.
+        embedder.script = [VECTOR_B]
+        result, _ = run(tracker, [(365, 400, RED_KIT)], 9)
+
+        assert result.identities[0].state is not IdentityState.RECOVERED
+
+    def test_a_matching_embedding_still_recovers_normally(self):
+        """The veto must not become a second, stricter gate that blocks
+        ordinary recoveries — a genuine match still goes through."""
+        embedder = ScriptedEmbedder()
+        tracker = IdentityTracker(detect_camera_cuts=False, embedding_extractor=embedder)
+
+        for step in range(6):
+            embedder.script = [VECTOR_A]
+            run(tracker, [(300 + step * 10, 400, RED_KIT)], step)
+        for hidden in range(6, 9):
+            tracker.update(frame_of(make_scene(), hidden), [])
+
+        embedder.script = [VECTOR_A]
+        result, _ = run(tracker, [(365, 400, RED_KIT)], 9)
+
+        assert result.identities[0].state is IdentityState.RECOVERED
+
+    def test_disabling_embeddings_falls_back_to_colour_and_position_only(self):
+        """The feature flag must actually do something: with it off, the
+        same wrong-build reappearance recovers exactly as it always did
+        before this signal existed."""
+        embedder = ScriptedEmbedder()
+        tracker = IdentityTracker(
+            detect_camera_cuts=False,
+            embedding_extractor=embedder,
+            use_appearance_embedding=False,
+        )
+
+        for step in range(6):
+            run(tracker, [(300 + step * 10, 400, RED_KIT)], step)
+        for hidden in range(6, 9):
+            tracker.update(frame_of(make_scene(), hidden), [])
+
+        result, _ = run(tracker, [(365, 400, RED_KIT)], 9)
+
+        # The scripted embedder is never even called with embeddings off.
+        assert embedder.script is None
+        assert result.identities[0].state is IdentityState.RECOVERED
+
+
 class TestCameraCuts:
     def test_a_cut_ends_every_identity(self):
         tracker = IdentityTracker(detect_camera_cuts=True, min_frames_between_cuts=0)
@@ -287,3 +379,96 @@ class TestReporting:
         assert result.identities == []
         assert result.confidence == 0.0
         assert result.reasons
+
+
+def textured_scene(seed: int = 11) -> np.ndarray:
+    """Enough visual detail for optical flow to register a pan — the flat
+    grass `make_scene()` has no corners at all to track, which is also why
+    every other test in this file is unaffected by compensation existing at
+    all: nothing there gives it a signal, so it silently no-ops."""
+    rng = np.random.default_rng(seed)
+    image = np.full((*FRAME_SIZE, 3), 60, dtype=np.uint8)
+    image[:, :] = GRASS
+    for _ in range(400):
+        x, y = int(rng.integers(0, FRAME_SIZE[1])), int(rng.integers(0, FRAME_SIZE[0]))
+        colour = tuple(int(c) for c in rng.integers(80, 255, size=3))
+        cv2.rectangle(image, (x, y), (x + 9, y + 9), colour, -1)
+    return image
+
+
+def panned(image: np.ndarray, dx: float) -> np.ndarray:
+    """The same scene as the camera would see it after panning by `dx` px."""
+    matrix = np.array([[1.0, 0.0, dx], [0.0, 1.0, 0.0]], dtype=np.float64)
+    return cv2.warpAffine(
+        image, matrix, (FRAME_SIZE[1], FRAME_SIZE[0]), borderMode=cv2.BORDER_REFLECT
+    )
+
+
+class TestCameraMotionCompensation:
+    """The failure this exists to fix: a broadcast pan moves every player's
+    box at once, and without compensation that reads as every track having
+    lost its player, not as the camera having moved."""
+
+    #: A player who is not moving on the pitch, filmed through a camera
+    #: panning 70px/frame — comfortably enough to drop IoU below the default
+    #: 0.3 match threshold for a 30x90 box if the prediction does not know
+    #: the whole scene just shifted.
+    _PAN_PER_FRAME = 70
+
+    def _run_pan(self, tracker: IdentityTracker):
+        base = textured_scene()
+        result = None
+        first_id = None
+        states = []
+        for step in range(6):
+            dx = step * self._PAN_PER_FRAME
+            scene = panned(base, dx)
+            # The player's own position on the pitch never changes — only
+            # the camera moves — so in image space they appear to pan with
+            # everything else.
+            poses = [add_player(scene, 400 + dx, 400, RED_KIT)]
+            result = tracker.update(frame_of(scene, step), poses)
+            if step == 0:
+                first_id = result.identities[0].track_id
+            states.append(result.identities[0].state)
+        return result, first_id, states
+
+    def test_a_hard_pan_does_not_break_the_track(self):
+        tracker = IdentityTracker(detect_camera_cuts=False)
+        result, first_id, states = self._run_pan(tracker)
+
+        assert result.identities[0].track_id == first_id
+        assert result.identities[0].state is IdentityState.CONFIRMED
+        # Never lost, so never had to be recovered — a clean, continuous
+        # follow throughout, not a lucky re-identification at the end.
+        assert IdentityState.RECOVERED not in states
+
+    def test_disabling_compensation_reproduces_the_old_failure(self):
+        """Proof the fix does something: with compensation off, the pan is
+        big enough that plain IoU misses the player outright at least once —
+        the track only survives at all because position-and-kit recovery
+        (`_recover_lost`) picks it back up, with lower confidence and a flag
+        asking the operator to double check. With compensation on, that
+        recovery is never even needed (see the test above)."""
+        tracker = IdentityTracker(detect_camera_cuts=False, camera_motion_compensation=False)
+        _, _, states = self._run_pan(tracker)
+
+        assert IdentityState.RECOVERED in states
+
+    def test_a_still_camera_needs_no_compensation_to_agree(self):
+        """Compensation must not change anything when there is nothing to
+        compensate for — a static shot should behave exactly as before."""
+        scene = textured_scene()
+        with_motion = IdentityTracker(detect_camera_cuts=False)
+        without_motion = IdentityTracker(
+            detect_camera_cuts=False, camera_motion_compensation=False
+        )
+
+        for step in range(6):
+            x = 400 + step * 5
+            a = with_motion.update(frame_of(scene, step), [add_player(scene, x, 400, RED_KIT)])
+            b = without_motion.update(
+                frame_of(scene, step), [add_player(scene, x, 400, RED_KIT)]
+            )
+
+        assert a.identities[0].state == b.identities[0].state == IdentityState.CONFIRMED

@@ -269,14 +269,24 @@ class MainViewModel(QObject):
     def offside(self) -> OffsideRunner:
         return self._offside
 
-    def check_offside(self, frame_id: int, image) -> None:
+    def check_offside(
+        self,
+        frame_id: int,
+        image,
+        warm_up_frames: list[tuple[int, object]] | None = None,
+    ) -> None:
         """Run the M2 pipeline on a confirmed frame — the operator's trigger
         for it. Automatic on confirm, not automatic on every frame: the
         pipeline reads model checkpoints and mutates team/identity state, and
         running it continuously would fight the live preview for the GPU for
         no benefit — an offside call is only ever asked about the one frame
-        the operator confirmed."""
-        self._offside.analyse(frame_id, image)
+        the operator confirmed.
+
+        `warm_up_frames` (oldest first, strictly before `frame_id`) let
+        identity tracking and kit colours build real continuity before the
+        confirmed frame is judged — see `OffsideRunner.analyse` and
+        `OffsidePipeline.warm_up`."""
+        self._offside.analyse(frame_id, image, warm_up_frames=warm_up_frames)
 
     @property
     def feature_cache(self) -> FeatureCache:

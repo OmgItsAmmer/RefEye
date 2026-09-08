@@ -65,6 +65,10 @@ class PlayerIdentity:
     #: appearance, in the same colour units M2.3 uses. None when appearance
     #: could not be measured (too small, too occluded).
     appearance_distance: float | None = None
+    #: How far this frame's general-appearance embedding (build, posture,
+    #: boots — not colour; see `appearance_embedding.py`) sits from the
+    #: track's own. None when embeddings are disabled or unavailable.
+    embedding_distance: float | None = None
     #: Recent centre positions, newest last — the visible proof of continuity.
     trail: list[tuple[float, float]] = field(default_factory=list)
 

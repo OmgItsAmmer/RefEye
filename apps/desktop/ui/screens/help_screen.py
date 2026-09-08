@@ -1,62 +1,25 @@
-"""Info screen — a plain-language walkthrough of what the app does, plus a
-live readout of which models are actually loaded in this build.
+"""Info screen — a client-presentable walkthrough of what the app does, plus
+a live readout of which models are actually loaded in this build.
 
 Leads with a disclaimer: this is an unpaid trial/demo build, not a shipped
 product — it must not be mistaken for something validated and supported for
 production use.
 
-No new visual language otherwise: every container here is the same
-Panel/label/badge vocabulary the rest of the app uses (theme.md), just
-arranged as explanatory copy instead of live controls.
+The pipeline story (`PipelineStoryPanel`, in widgets/pipeline_story.py) is
+the one place in this screen that goes beyond plain Panel/label vocabulary —
+a staggered reveal animation, built specifically because this screen is meant
+to be shown to a client, not just read once by an operator. Everything else
+here stays inside the same vocabulary the rest of the app uses (theme.md).
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ai.model_registry.registry import ModelRegistry
-from apps.desktop.ui.widgets.common import Panel, data_value, divider, heading, label, meta, title
+from apps.desktop.ui.widgets.common import Panel, data_value, divider, label, meta, title
+from apps.desktop.ui.widgets.pipeline_story import PipelineStoryPanel
 from core.config.schema import AppSettings
-
-_STEPS = [
-    (
-        "1",
-        "Live capture",
-        (
-            "The configured video source streams continuously into a rolling frame "
-            "buffer. Nothing is sent to the AI yet — this is just playback."
-        ),
-    ),
-    (
-        "2",
-        "Detect & track",
-        (
-            "In the background, a detector locates players and the ball on a "
-            "sampled subset of frames; a tracker keeps consistent identities "
-            "across frames so movement can be read over time."
-        ),
-    ),
-    (
-        "3",
-        "Spot & rank candidates",
-        (
-            "Pressing Analyse (or picking a camera/Best on Live Grid) hands the "
-            "action spotter the recent buffered window. It finds ball-contact "
-            "moments, refines the exact contact frame, and ranks the strongest "
-            "candidates."
-        ),
-    ),
-    (
-        "4",
-        "Operator review",
-        (
-            "You step through candidates and individual frames, compare "
-            "alternatives, and confirm the exact frame yourself — the AI "
-            "proposes, you decide."
-        ),
-    ),
-]
 
 
 class HelpScreen(QWidget):
@@ -84,7 +47,7 @@ class HelpScreen(QWidget):
         inner_layout.setContentsMargins(0, 0, 4, 0)
         inner_layout.setSpacing(16)
         inner_layout.addWidget(self._build_disclaimer_banner())
-        inner_layout.addWidget(self._build_flow_panel())
+        inner_layout.addWidget(PipelineStoryPanel())
         inner_layout.addWidget(self._build_models_panel())
         inner_layout.addStretch(1)
 
@@ -115,38 +78,6 @@ class HelpScreen(QWidget):
         body.setProperty("role", "meta")
         layout.addWidget(body)
         return banner
-
-    # -- how it works -------------------------------------------------------
-
-    def _build_flow_panel(self) -> Panel:
-        panel = Panel("How this app works")
-        for index, (number, heading_text, body_text) in enumerate(_STEPS):
-            panel.body().addWidget(self._build_step_row(number, heading_text, body_text))
-            if index != len(_STEPS) - 1:
-                panel.body().addWidget(divider())
-        return panel
-
-    @staticmethod
-    def _build_step_row(number: str, heading_text: str, body_text: str) -> QWidget:
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 6, 0, 6)
-        layout.setSpacing(14)
-
-        badge = QLabel(number)
-        badge.setObjectName("HelpStepBadge")
-        badge.setFixedSize(28, 28)
-        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
-        text_col.addWidget(heading(heading_text))
-        body_label = meta(body_text)
-        body_label.setWordWrap(True)
-        text_col.addWidget(body_label)
-        layout.addLayout(text_col, 1)
-        return row
 
     # -- models in this build ------------------------------------------------
 

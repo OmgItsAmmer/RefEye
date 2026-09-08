@@ -56,12 +56,18 @@ def blank_frame() -> np.ndarray:
     return np.zeros((360, 640, 3), dtype=np.uint8)
 
 
-def wait_for(condition, timeout=5.0) -> bool:
+def wait_for(condition, timeout=20.0) -> bool:
     """Pump the Qt event loop until `condition()` is true or time runs out.
 
     The pipeline runs on a background `threading.Thread`; its signals are
     only delivered once this thread's event loop gets to process them, so a
     plain `time.sleep` without pumping events would never see them arrive.
+
+    20s, not 5s: each `runner` fixture builds a fresh `OffsidePipeline`, and
+    the auto-landmark model it loads on its first pitch-calibration stage
+    (`offside/pitch_calibration/auto_landmarks.py`) is a real checkpoint read
+    from disk — a cold read comfortably exceeds 5s, well before this test's
+    own logic (which uses no models at all, `_EmptyRegistry`) even runs.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

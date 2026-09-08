@@ -79,6 +79,16 @@ ANKLE_KEYPOINTS: Final = (LEFT_ANKLE, RIGHT_ANKLE)
 
 KNEE_KEYPOINTS: Final = (LEFT_KNEE, RIGHT_KNEE)
 
+#: Both shoulders and both hips — what M2.3's shirt-colour sampler needs to
+#: trust the torso quad over the box-band fallback (jersey_color.py). A
+#: player can have a confident ankle (feet are usually clearer — lower,
+#: closer to camera, less often occluded by a teammate) and no confident
+#: torso at all: a crowded box, a player turned side-on, or a shoulder cut
+#: off by whoever is standing in front of them. Named here, not duplicated
+#: in jersey_color.py, so "what counts as a usable torso" can never quietly
+#: drift into two different answers.
+TORSO_KEYPOINTS: Final = (LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_HIP, RIGHT_HIP)
+
 #: Arms and hands: excluded from offside measurement (see module docstring).
 ARM_KEYPOINTS: Final = frozenset({LEFT_ELBOW, RIGHT_ELBOW, LEFT_WRIST, RIGHT_WRIST})
 
@@ -195,6 +205,17 @@ class PlayerPose:
             for name, kp in self.keypoints.items()
             if kp.confidence >= min_confidence
         }
+
+    def has_confident_torso(self, min_confidence: float) -> bool:
+        """Both shoulders and both hips, each at least this confident — the
+        same test `jersey_color.py`'s torso quad uses. A player can pass this
+        as False while still having a perfectly good ankle: the two are
+        different keypoint groups, found (or missed) independently by the
+        same pose model."""
+        return all(
+            (kp := self.keypoint(name)) is not None and kp.confidence >= min_confidence
+            for name in TORSO_KEYPOINTS
+        )
 
     def offside_surface_points(self, min_confidence: float) -> list[Keypoint]:
         """Confident keypoints an offside line may legally be measured from.

@@ -40,12 +40,13 @@ reintroducing the bug a third time.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from apps.desktop.ui.theme import tokens as t
-from apps.desktop.ui.widgets.common import meta
+from apps.desktop.ui.widgets.common import AnimatedButton, meta
+from offside.field_geometry.pitch import PitchModel
 from offside.pitch_calibration.rendering import render_top_down
 
 #: Rendered at a fixed pitch-aspect size, then fitted into whatever width the
@@ -114,9 +115,17 @@ class _PitchCanvas(QWidget):
 class PitchMapPanel(QWidget):
     """The flattened pitch: the calibration marks, and the players on it."""
 
-    def __init__(self, parent: QWidget | None = None):
+    #: The operator wants to mark landmarks by hand — see
+    #: `apps.desktop.ui.widgets.landmark_marking_dialog`. Emitted rather than
+    #: opening the dialog directly: this widget has no access to the
+    #: confirmed frame's raw image or the pipeline's `mark_landmark`/re-run
+    #: hooks, both of which live at the screen/window level.
+    mark_requested = Signal()
+
+    def __init__(self, pitch: PitchModel | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("PitchMapPanel")
+        self._pitch = pitch or PitchModel()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -129,9 +138,25 @@ class PitchMapPanel(QWidget):
         self._caption.setWordWrap(True)
         layout.addWidget(self._caption)
 
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        # Always available, not just when calibration is weak — an operator
+        # who disagrees with a confident-looking automatic read is entitled
+        # to mark the pitch themselves regardless of what the number says.
+        self._mark_button = AnimatedButton("Mark landmarks")
+        self._mark_button.setToolTip(
+            "Mark the pitch by hand — overrides automatic calibration for this frame"
+        )
+        self._mark_button.clicked.connect(self.mark_requested.emit)
+        self._mark_button.setEnabled(False)
+        action_row.addWidget(self._mark_button)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
+
+        self._last_is_metric: bool | None = None
         self.clear()
 
-    def set_analysis(self, analysis, pitch, marked_landmarks: dict | None = None) -> None:
+    def set_analysis(self, analysis, pitch: PitchModel | None = None, marked_landmarks: dict | None = None) -> None:
         """Render the map for one frame's analysis.
 
         `pitch` is the `PitchModel` the pipeline that produced `analysis` was
@@ -139,30 +164,55 @@ class PitchMapPanel(QWidget):
         the real-world dimensions and landmark positions to draw, and nothing
         on `FrameAnalysis` itself carries that.
         """
+        if pitch is not None:
+            self._pitch = pitch
         canvas = render_top_down(
-            pitch,
+            self._pitch,
             analysis.calibration,
             analysis.poses,
             analysis.teams,
             size=_RENDER_SIZE,
             marked_landmarks=marked_landmarks or {},
-            # The review screen has no click-to-mark flow — only the Pipeline
-            # Inspector does — so the map gets a status line instead of an
-            # instruction to click points nothing here can handle.
+            # The click-to-mark *map* interaction stays inspector-only (that
+            # UI lets you pick a landmark by pointing at this diagram); the
+            # product's manual-marking flow is the separate dialog opened by
+            # `mark_requested`, which clicks the video frame instead — see
+            # `apps.desktop.ui.widgets.landmark_marking_dialog`.
             interactive=False,
         )
         self._canvas.set_canvas(canvas)
+        calibration = analysis.calibration
+        self._last_is_metric = bool(calibration is not None and calibration.is_metric)
         self._caption.setText(self._describe(analysis, marked_landmarks or {}))
+        self._mark_button.setEnabled(True)
 
     def clear(self) -> None:
-        self._canvas.set_canvas(None)
+        canvas = render_top_down(
+            self._pitch,
+            None,
+            [],
+            None,
+            size=_RENDER_SIZE,
+            interactive=False,
+        )
+        self._canvas.set_canvas(canvas)
         self._caption.setText("No frame analysed yet.")
+        self._mark_button.setEnabled(False)
+        self._last_is_metric = None
+
+    @property
+    def needs_manual_marking(self) -> bool:
+        """Whether the last frame shown fell short of metric calibration —
+        the "Mark landmarks" action is always available; this is what a
+        caller uses to decide whether to make the ask louder than a button
+        sitting quietly in a rail (see `MainWindow._on_offside_completed`)."""
+        return self._last_is_metric is False
 
     @staticmethod
     def _describe(analysis, marked_landmarks: dict) -> str:
         calibration = analysis.calibration
         if calibration is None or not calibration.can_draw_offside_line:
-            return "Not calibrated on this frame."
+            return "Not calibrated on this frame — mark landmarks below for a precise line."
 
         source = "operator-marked" if marked_landmarks else "automatic"
         if calibration.is_metric:

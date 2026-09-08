@@ -246,6 +246,24 @@ offside:
       min_confidence: 0.3
       exclude_box_margin: 0.25
 
+    # Automatic pitch-landmark detection — METRIC calibration with nobody at
+    # the mouse. A football-pitch-specific keypoint model (yolo11-pose,
+    # trained on SoccerNet's calibration dataset — see
+    # models/pitch_keypoints/README.md) finds the same corner points an
+    # operator would otherwise click, feeds them through the identical
+    # homography solve manual marking uses, and is only used when it is
+    # confident: fewer than min_points and the frame falls back to the
+    # weaker directional line detection above, exactly as it did before this
+    # existed. Validated on three different real broadcast clips before
+    # being turned on by default — see auto_landmarks.py's docstring.
+    auto_landmarks:
+      enabled: true
+      checkpoint: "./models/pitch_keypoints/soccana_keypoint.pt"
+      imgsz: 640
+      visibility_threshold: 0.5
+      detection_confidence: 0.25
+      min_points: 6
+
   # M2.3 — who is attacking, who is defending, who is in goal.
   #
   # No kit colour appears here, and none ever should: the two teams are
@@ -305,7 +323,14 @@ offside:
     # brightness. Lighting is dealt with above instead of by blunting this.
     lightness_weight: 1.0
 
-    min_players_for_clustering: 6
+    # 2 is the mathematical floor (one point per kit) — used to be a
+    # cliff-edge refusal at 6, well above it. Below that, the stage produced
+    # nothing at all even when 4-5 usable colours would have been enough to
+    # attempt a fit. confident_player_count below already scales confidence
+    # DOWN smoothly as evidence thins, and the M2.6 publish floor catches
+    # anything too weak to trust — a hard refusal above the real minimum
+    # was inconsistent with how the rest of this stage handles thin evidence.
+    min_players_for_clustering: 2
     confident_player_count: 10
     # The goalkeeper/referee cut is derived from the frame itself (median
     # residual + N MADs), never from a fixed colour — how tight a kit measures
@@ -476,6 +501,14 @@ logging:
   console: true
   rotation_max_bytes: 10485760   # 10 MB per file
   rotation_backup_count: 5
+
+  # One detailed JSON file per offside pipeline run (triggered when the
+  # operator confirms a frame) — every stage's state, full detail lines,
+  # timing, and the final confidence chain, self-contained so a developer or
+  # an agent can inspect one run without grepping the firehose session log.
+  pipeline_run_log:
+    enabled: true
+    directory: "./logs/CLI"
 
 persistence:
   sqlite_path: "./storage/settings/app.db"

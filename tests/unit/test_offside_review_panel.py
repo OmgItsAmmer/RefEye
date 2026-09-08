@@ -123,7 +123,7 @@ def test_every_stage_gets_a_row_including_the_healthy_ones(panel):
     panel.set_explanation(explanation)
 
     visible = [row for row in panel._rows if row.isVisibleTo(panel)]
-    assert len(visible) == len(explanation.signals) == 5
+    assert len(visible) == len(explanation.signals) == 6
 
 
 def test_a_healthy_row_reads_good_with_a_percentage(panel):
@@ -149,15 +149,32 @@ def test_a_weak_row_reads_weak_not_good(panel):
 def test_a_blocking_row_reads_poor_even_with_a_nonzero_score(panel):
     """`blocking` must dominate the score-based read — a stage that is
     missing outright is not merely "weak", regardless of what number it
-    happens to carry."""
+    happens to carry. Uses the attacking-side row: unknown sides block *that*
+    signal now, not team colours (see the M2.3 signal split)."""
     _, explanation = explain_with(teams=make_teams(known=False))
     panel.set_explanation(explanation)
 
-    team_index = next(
-        i for i, s in enumerate(explanation.signals) if s.key == "teams"
+    side_index = next(
+        i for i, s in enumerate(explanation.signals) if s.key == "attacking_side"
     )
-    row = panel._rows[team_index]
+    row = panel._rows[side_index]
     assert "POOR" in row._score.text()
+
+
+def test_team_colours_and_attacking_side_are_reported_separately(panel):
+    """The bug the split fixes, at the panel layer: a frame where the kits
+    read perfectly cleanly but the attacking side is unknown must not show
+    "Team colours" in red — that sends an operator to recheck a stage that
+    was never broken."""
+    _, explanation = explain_with(teams=make_teams(known=False))
+    panel.set_explanation(explanation)
+
+    team_index = next(i for i, s in enumerate(explanation.signals) if s.key == "teams")
+    side_index = next(
+        i for i, s in enumerate(explanation.signals) if s.key == "attacking_side"
+    )
+    assert "GOOD" in panel._rows[team_index]._score.text()
+    assert "POOR" in panel._rows[side_index]._score.text()
 
 
 def test_a_stage_with_nothing_to_say_shows_n_a_not_zero(panel):
@@ -175,7 +192,7 @@ def test_rows_are_reused_rather_than_stacked_up_between_frames(panel):
     rows each time would leak widgets for the length of a review session."""
     for _ in range(5):
         panel.set_explanation(explain_with()[1])
-    assert len(panel._rows) == 5
+    assert len(panel._rows) == 6
 
 
 def test_the_row_tooltip_carries_the_full_reason(panel):

@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 import cv2
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Slot
 from PySide6.QtWidgets import (
+    QDialog,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QMainWindow,
@@ -51,6 +52,7 @@ from apps.desktop.ui.screens.help_screen import HelpScreen
 from apps.desktop.ui.screens.live_grid_screen import LiveGridScreen
 from apps.desktop.ui.widgets.common import BadgeVariant, StatusBadge, data_value
 from apps.desktop.ui.widgets.event_ticker import EventTicker
+from apps.desktop.ui.widgets.landmark_marking_dialog import LandmarkMarkingDialog
 from apps.desktop.ui.widgets.sidebar import Sidebar
 from apps.desktop.viewmodels.main_viewmodel import MainViewModel
 from core.config.paths import resolve
@@ -120,6 +122,11 @@ class MainWindow(QMainWindow):
         self._vm.offside.stage_progress.connect(self._analyzer.show_offside_stage)
         self._vm.offside.completed.connect(self._on_offside_completed)
         self._vm.offside.failed.connect(self._analyzer.show_offside_failed)
+        self._analyzer.pitch_map.mark_requested.connect(self._on_mark_landmarks_requested)
+        #: The frame the offside pipeline last ran on — kept so "Mark
+        #: landmarks" can re-open the dialog on the same image without the
+        #: operator having to re-confirm anything.
+        self._last_offside_frame: tuple[int, object] | None = None
 
         self._help = HelpScreen(settings=self._settings, registry=self._vm.registry)
 
@@ -285,12 +292,6 @@ class MainWindow(QMainWindow):
             if other != index:
                 self._live_grid.set_camera_overlay(other, [], None, None)
 
-        # The "Last Ns" preview must follow the focused camera too — it was
-        # pinned to camera 1's feed regardless of which camera got analyzed,
-        # so picking camera 2/3/4 showed the right analysis but the wrong
-        # looping preview clip.
-        self._analyzer.recent_clip.set_video_service(self._vm.video_for_camera(index))
-
     @Slot(int, str, str)
     def _on_camera_preview_state(self, index: int, state: str, message: str) -> None:
         if state in (StreamState.ERROR.value, StreamState.STOPPED.value):
@@ -432,7 +433,10 @@ class MainWindow(QMainWindow):
         current = session.current_frame() if session else None
         if current is not None:
             confirmed_frame_id, image = current
-            self._vm.check_offside(confirmed_frame_id, image)
+            self._last_offside_frame = (confirmed_frame_id, image)
+            strip = session.current_strip if session else None
+            warm_up = strip.frames_before(confirmed_frame_id) if strip is not None else []
+            self._vm.check_offside(confirmed_frame_id, image, warm_up_frames=warm_up)
 
     def _on_offside_completed(self, analysis) -> None:
         self._analyzer.set_offside_decision(analysis.offside, analysis.explanation)
@@ -443,6 +447,38 @@ class MainWindow(QMainWindow):
             for correspondence in pipeline.manual_correspondences
         }
         self._analyzer.set_pitch_analysis(analysis, pipeline.pitch, marked)
+
+    def _on_mark_landmarks_requested(self) -> None:
+        """Open the manual-marking dialog on the frame the offside pipeline
+        last ran on, then re-run that pipeline with whatever the operator
+        marked — the exact same re-entry point a fresh confirm uses
+        (`MainViewModel.check_offside`), so marking replays the whole
+        checklist live rather than patching the verdict in place."""
+        if self._last_offside_frame is None:
+            self.statusBar().showMessage(
+                "Confirm a frame first — there's nothing to mark landmarks on yet.", 5000
+            )
+            return
+
+        frame_id, image = self._last_offside_frame
+        pipeline = self._vm.offside.pipeline
+        existing = {
+            correspondence.landmark: correspondence.image_xy
+            for correspondence in pipeline.manual_correspondences
+        }
+
+        dialog = LandmarkMarkingDialog(image, pipeline.pitch, existing, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Goes through `mark_landmark` (not a direct assignment) so the
+        # calibration follower re-anchors on these marks — a fresh operator
+        # click is better evidence than optical flow carried from whatever
+        # the pitch used to look calibrated from.
+        pipeline.clear_landmarks()
+        for correspondence in dialog.correspondences():
+            pipeline.mark_landmark(correspondence.image_xy, correspondence.landmark)
+        self._vm.check_offside(frame_id, image)
 
     def _save_confirmed_frame(self, session, candidate, frame_id: int):
         """Write the confirmed frame to disk as a JPEG so the operator has

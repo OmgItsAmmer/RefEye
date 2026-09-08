@@ -59,7 +59,7 @@ from vision.features.feature_cache import FeatureCache
 
 
 class CandidateRow(QWidget):
-    """One selectable candidate in the alternatives list."""
+    """One selectable candidate in the alternatives pill list."""
 
     clicked = Signal(int)
 
@@ -70,21 +70,19 @@ class CandidateRow(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
-        layout.setSpacing(10)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(6)
 
         # Rank pip: a single-hue ramp, never traffic-light coding (theme.md).
         self._pip = QLabel()
         self._pip.setObjectName("RankPip")
-        self._pip.setFixedSize(4, 20)
+        self._pip.setFixedSize(3, 14)
         layout.addWidget(self._pip)
 
         self._action = QLabel()
         layout.addWidget(self._action)
-        layout.addStretch(1)
 
         # A confidence score is a technical value, not prose — Space Mono
-        # (theme.md's "data face" rule), same as timestamps/counters.
         self._score = data_value()
         layout.addWidget(self._score)
 
@@ -98,10 +96,6 @@ class CandidateRow(QWidget):
         self.style().polish(self)
 
     def paintEvent(self, event) -> None:  # noqa: N802 — Qt naming
-        # A plain QWidget subclass ignores stylesheet background/border unless
-        # it explicitly draws the style primitive. Without this the selected
-        # row looks identical to the others and the operator cannot tell which
-        # candidate they are on.
         option = QStyleOption()
         option.initFrom(self)
         painter = QPainter(self)
@@ -146,7 +140,7 @@ class CandidateReviewPanel(QWidget):
 
         self._set_enabled(False)
 
-    # -- construction: video column ------------------------------------
+    # -- construction: video column & integrated control deck ----------
 
     def _build_video_column(self) -> QWidget:
         widget = QWidget()
@@ -160,38 +154,77 @@ class CandidateReviewPanel(QWidget):
         self._surface.set_placeholder("No candidate selected")
         layout.addWidget(self._surface, stretch=1)
 
+        layout.addWidget(self._build_control_deck())
+        return widget
+
+    def _build_control_deck(self) -> QWidget:
+        deck = QFrame()
+        deck.setObjectName("ReviewControlDeck")
+        deck_layout = QHBoxLayout(deck)
+        deck_layout.setContentsMargins(14, 10, 14, 10)
+        deck_layout.setSpacing(16)
+
+        # -- Left section: metadata & evidence --
+        meta_col = QVBoxLayout()
+        meta_col.setContentsMargins(0, 0, 0, 0)
+        meta_col.setSpacing(3)
+
         header = QHBoxLayout()
-        header.setSpacing(t.SPACING_UNIT)
+        header.setSpacing(8)
         self._action_badge = StatusBadge("—", BadgeVariant.ACCENT)
         header.addWidget(self._action_badge)
-        header.addStretch(1)
-        # Candidate/frame counters are technical values — Space Mono
-        # (theme.md: "frame/candidate counters" are explicitly the data face).
-        self._candidate_counter = data_value("")
-        header.addWidget(self._candidate_counter)
-        layout.addLayout(header)
-
         self._frame_label = data_value("")
-        layout.addWidget(self._frame_label)
+        header.addWidget(self._frame_label)
+        header.addStretch(1)
+        meta_col.addLayout(header)
 
         self._evidence = meta("")
         self._evidence.setWordWrap(True)
-        layout.addWidget(self._evidence)
+        meta_col.addWidget(self._evidence)
+        deck_layout.addLayout(meta_col, stretch=3)
 
-        layout.addWidget(self._build_transport_bar())
-        return widget
+        # -- Center section: transport controls --
+        transport_box = self._build_transport_bar()
+        deck_layout.addWidget(transport_box, stretch=3)
+
+        # -- Right section: candidate alternatives & confirmation actions --
+        actions_col = QVBoxLayout()
+        actions_col.setContentsMargins(0, 0, 0, 0)
+        actions_col.setSpacing(6)
+
+        alt_header = QHBoxLayout()
+        alt_header.setSpacing(6)
+        self._candidate_counter = meta("Candidates:")
+        alt_header.addWidget(self._candidate_counter)
+
+        self._rows_container = QHBoxLayout()
+        self._rows_container.setSpacing(6)
+        alt_header.addLayout(self._rows_container)
+        alt_header.addStretch(1)
+        actions_col.addLayout(alt_header)
+
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(8)
+        self._confirm_button = AnimatedButton("Confirm frame")
+        self._confirm_button.setProperty("role", "primary")
+        buttons_row.addWidget(self._confirm_button)
+
+        self._retry_button = AnimatedButton("Retry")
+        self._retry_button.setProperty("role", "danger")
+        buttons_row.addWidget(self._retry_button)
+        actions_col.addLayout(buttons_row)
+
+        deck_layout.addLayout(actions_col, stretch=4)
+        return deck
 
     def _build_transport_bar(self) -> QWidget:
-        """Spotify-style transport row: skip-candidate / step-frame / best /
-        step-frame / skip-candidate, centered under the video."""
-        wrapper = QHBoxLayout()
-        wrapper.addStretch(1)
-
+        """Modern transport row: skip-candidate / step-frame / best /
+        step-frame / skip-candidate."""
         bar = QFrame()
         bar.setObjectName("TransportBar")
         bar_layout = QHBoxLayout(bar)
-        bar_layout.setContentsMargins(10, 10, 10, 10)
-        bar_layout.setSpacing(8)
+        bar_layout.setContentsMargins(8, 4, 8, 4)
+        bar_layout.setSpacing(6)
 
         self._prev_candidate = self._transport_button(
             "", "Previous event in the play", icon=skip_icon(forward=False)
@@ -212,10 +245,11 @@ class CandidateReviewPanel(QWidget):
         ):
             bar_layout.addWidget(button)
 
-        wrapper.addWidget(bar)
-        wrapper.addStretch(1)
         container = QWidget()
-        container.setLayout(wrapper)
+        container_layout = QHBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        container_layout.addWidget(bar)
         return container
 
     @staticmethod
@@ -233,31 +267,12 @@ class CandidateReviewPanel(QWidget):
             button.setIconSize(QSize(18, 18))
         return button
 
-    # -- construction: side column ---------------------------------------
+    # -- construction: side column (kept for compatibility) -------------
 
     def _build_side_column(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(t.SPACING_UNIT)
-
-        self._rows_container = QVBoxLayout()
-        self._rows_container.setSpacing(2)
-        rows_widget = QWidget()
-        rows_widget.setLayout(self._rows_container)
-        layout.addWidget(rows_widget, stretch=1)
-
-        layout.addWidget(divider())
-
-        # Stacked full-width, not side-by-side — the side rail is narrow.
-        self._confirm_button = AnimatedButton("Confirm frame")
-        self._confirm_button.setProperty("role", "primary")
-        layout.addWidget(self._confirm_button)
-
-        self._retry_button = AnimatedButton("Retry analysis")
-        self._retry_button.setProperty("role", "danger")
-        layout.addWidget(self._retry_button)
-
         return widget
 
     # -- session ------------------------------------------------------------

@@ -7,6 +7,8 @@ footage is most of the time.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from offside.body_keypoints.ground_point import (
@@ -17,12 +19,15 @@ from offside.body_keypoints.keypoints import (
     ARM_KEYPOINTS,
     COCO_KEYPOINT_NAMES,
     LEFT_ANKLE,
+    LEFT_HIP,
     LEFT_KNEE,
     LEFT_SHOULDER,
     LEFT_WRIST,
     OFFSIDE_SURFACE_KEYPOINTS,
     RIGHT_ANKLE,
+    RIGHT_HIP,
     RIGHT_KNEE,
+    RIGHT_SHOULDER,
     SOURCE_ANKLE,
     SOURCE_BBOX_BOTTOM,
     SOURCE_KNEE_PROJECTED,
@@ -237,3 +242,48 @@ class TestPlayerPose:
         )
         names = {p.name for p in player.offside_surface_points(0.5)}
         assert names == {LEFT_SHOULDER}
+
+
+class TestHasConfidentTorso:
+    """A confident ankle and a confident torso are found independently by
+    the same pose model — this is the check M2.3's shirt-colour sampler
+    relies on, and it must not silently agree with `has_pose` or with a
+    good foot position, since a player can clear either of those with no
+    usable torso at all (a crowded box, a side-on stance, an occluded
+    shoulder)."""
+
+    ALL_FOUR: ClassVar = {
+        LEFT_SHOULDER: kp(LEFT_SHOULDER, 120.0, 120.0),
+        RIGHT_SHOULDER: kp(RIGHT_SHOULDER, 140.0, 120.0),
+        LEFT_HIP: kp(LEFT_HIP, 122.0, 160.0),
+        RIGHT_HIP: kp(RIGHT_HIP, 138.0, 160.0),
+    }
+
+    def test_all_four_points_confident_is_true(self):
+        assert pose(self.ALL_FOUR).has_confident_torso(0.5)
+
+    def test_missing_one_point_is_false(self):
+        keypoints = dict(self.ALL_FOUR)
+        del keypoints[RIGHT_HIP]
+        assert not pose(keypoints).has_confident_torso(0.5)
+
+    def test_a_low_confidence_point_is_false(self):
+        keypoints = dict(self.ALL_FOUR)
+        keypoints[LEFT_HIP] = kp(LEFT_HIP, 122.0, 160.0, conf=0.2)
+        assert not pose(keypoints).has_confident_torso(0.5)
+
+    def test_no_keypoints_at_all_is_false_not_a_crash(self):
+        assert not pose({}).has_confident_torso(0.5)
+
+    def test_a_good_ankle_does_not_imply_a_good_torso(self):
+        """The exact gap this method exists to surface: a player can be
+        fully measured for offside (a confident ankle) and still have
+        nothing M2.3 can use."""
+        measured_ground = GroundPoint(
+            xy=(130.0, 199.0), confidence=0.95, source=SOURCE_ANKLE, reason="test"
+        )
+        player = pose(
+            {LEFT_ANKLE: kp(LEFT_ANKLE, 130.0, 199.0, conf=0.95)}, ground=measured_ground
+        )
+        assert player.ground_point.is_measured
+        assert not player.has_confident_torso(0.5)

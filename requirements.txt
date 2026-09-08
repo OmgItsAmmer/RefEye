@@ -14,6 +14,7 @@ pyside6>=6.7,<7.0
 av>=12.0
 opencv-python>=4.9
 numpy>=1.26,<2.0
+scipy>=1.11,<1.14   # Hungarian assignment (offside/player_identity/tracker.py)
 onnxruntime-gpu>=1.18
 ultralytics>=8.2
 timm>=1.0            # T-DEED backbone (vendored in ai/action_spotting/tdeed/_vendor)

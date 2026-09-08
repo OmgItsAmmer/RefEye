@@ -179,18 +179,24 @@ class PitchCalibrator:
         correspondences: list[PointCorrespondence],
         *,
         segment: int = 0,
+        source: str = "manual",
     ) -> PitchCalibration:
-        """Full metric calibration from operator-identified landmarks.
+        """Full metric calibration from a set of identified landmarks.
 
         This is the path that actually works today on arbitrary broadcast
         footage, and the plan requires it to exist regardless (M2_Plan
         section 7: manual override at every classification stage).
+
+        `source` defaults to "manual" (an operator's own clicks) but is
+        overridable — the auto landmark detector (`auto_landmarks.py`) feeds
+        its own points through this exact same solve, and must be able to
+        say so honestly rather than claiming to be the operator's work.
         """
         if len(correspondences) < 4:
             return PitchCalibration(
                 level=CalibrationLevel.NONE,
                 confidence=0.0,
-                source="manual",
+                source=source,
                 segment=segment,
                 reasons=[
                     (
@@ -205,7 +211,7 @@ class PitchCalibrator:
             return PitchCalibration(
                 level=CalibrationLevel.NONE,
                 confidence=0.0,
-                source="manual",
+                source=source,
                 segment=segment,
                 reasons=[
                     (
@@ -226,7 +232,7 @@ class PitchCalibrator:
         logger.info(
             "pitch_calibrated",
             component="pitch_calibration",
-            source="manual",
+            source=source,
             points=len(correspondences),
             mean_error_m=round(fit.mean_error_m, 3),
             confidence=round(fit.confidence, 3),
@@ -235,7 +241,7 @@ class PitchCalibrator:
         return PitchCalibration(
             level=CalibrationLevel.METRIC,
             confidence=fit.confidence,
-            source="manual",
+            source=source,
             reasons=list(fit.reasons),
             warnings=warnings,
             fit=fit,

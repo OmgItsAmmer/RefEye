@@ -40,6 +40,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -229,8 +230,8 @@ class RequirementRow(QWidget):
 
 
 class SuggestionBox(QWidget):
-    """Actionable next steps, set apart from the rest of the panel rather
-    than folded into a paragraph — "suggestion box", literally."""
+    """Actionable next steps, set apart from the rest of the panel as a
+    prominent actionable card."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -238,21 +239,26 @@ class SuggestionBox(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
 
+        header_row = QHBoxLayout()
+        header_row.setSpacing(6)
         self._title = label("Suggestions")
-        layout.addWidget(self._title)
+        header_row.addWidget(self._title)
+        header_row.addStretch(1)
+        layout.addLayout(header_row)
 
         self._items_layout = QVBoxLayout()
         self._items_layout.setContentsMargins(0, 0, 0, 0)
-        self._items_layout.setSpacing(2)
+        self._items_layout.setSpacing(4)
         layout.addLayout(self._items_layout)
 
         self._rows: list[QLabel] = []
 
     def set_actions(self, actions: list[str]) -> None:
         while len(self._rows) < len(actions):
-            row = meta("")
+            row = QLabel("")
+            row.setObjectName("SuggestionItem")
             row.setWordWrap(True)
             self._items_layout.addWidget(row)
             self._rows.append(row)
@@ -335,16 +341,28 @@ class OffsideReviewPanel(QWidget):
         self._suggestions = SuggestionBox()
         layout.addWidget(self._suggestions)
 
-        # -- 4. the reason, last --------------------------------------------
+        # -- 4. the reason & why card ---------------------------------------
         layout.addWidget(divider())
-        layout.addWidget(label("Why"))
+        self._reason_card = QFrame()
+        self._reason_card.setObjectName("ReasoningBox")
+        reason_layout = QVBoxLayout(self._reason_card)
+        reason_layout.setContentsMargins(12, 10, 12, 10)
+        reason_layout.setSpacing(4)
+
+        reason_header = label("Why")
+        reason_layout.addWidget(reason_header)
+
         self._headline = QLabel("No frame has been analysed yet.")
+        self._headline.setObjectName("ReasonHeadline")
         self._headline.setWordWrap(True)
-        layout.addWidget(self._headline)
+        reason_layout.addWidget(self._headline)
 
         self._detail = meta("")
+        self._detail.setObjectName("ReasonDetail")
         self._detail.setWordWrap(True)
-        layout.addWidget(self._detail)
+        reason_layout.addWidget(self._detail)
+
+        layout.addWidget(self._reason_card)
 
         layout.addStretch(1)
         layout.addWidget(divider())

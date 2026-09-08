@@ -113,13 +113,9 @@ def test_the_offside_checklist_fits_the_review_rail(screen):
         )
 
 
-def test_the_camera_preview_does_not_set_the_columns_floor(screen):
-    """`RecentClipPreview` subclasses the main video surface, which sets a
-    320px minimum meant for the large left-hand video — inherited here by a
-    corner thumbnail unless explicitly overridden. This is the one that
-    actually broke the column: found only once the offside checklist's own
-    fix made this the widest thing left in it."""
-    assert screen._top_right_stack.minimumSizeHint().width() <= _RIGHT_COLUMN_BUDGET_PX  # noqa: SLF001
+def test_the_pitch_map_does_not_set_the_columns_floor(screen):
+    """The map renders natively at 760px and must not carry that into layout."""
+    assert screen.pitch_map.minimumSizeHint().width() <= _RIGHT_COLUMN_BUDGET_PX
 
 
 def test_the_override_buttons_wrap_to_two_rows_not_one(screen):
@@ -134,12 +130,6 @@ def test_the_override_buttons_wrap_to_two_rows_not_one(screen):
     assert len(rows) == 2, "expected the four override buttons on two rows, not one"
 
 
-def test_the_pitch_map_does_not_set_the_columns_floor(screen):
-    """Same class of bug as the checklist and the camera thumbnail: the map
-    renders natively at 760px and must not carry that into layout."""
-    assert screen.pitch_map.minimumSizeHint().width() <= _RIGHT_COLUMN_BUDGET_PX
-
-
 # -- the pitch map (M2.7) -----------------------------------------------
 
 
@@ -152,6 +142,7 @@ def test_set_pitch_analysis_reaches_the_map(screen):
     screen.set_pitch_analysis(analysis, pitch)
 
     assert screen.pitch_map._canvas._pixmap is not None  # noqa: SLF001
+    assert screen.pitch_map._mark_button.isEnabled() is True  # noqa: SLF001
 
 
 def test_starting_a_new_offside_check_clears_the_previous_map(screen):
@@ -165,7 +156,8 @@ def test_starting_a_new_offside_check_clears_the_previous_map(screen):
 
     screen.show_offside_started(7)
 
-    assert screen.pitch_map._canvas._pixmap is None  # noqa: SLF001
+    assert screen.pitch_map._caption.text() == "No frame analysed yet."  # noqa: SLF001
+    assert screen.pitch_map._mark_button.isEnabled() is False  # noqa: SLF001
 
 
 def test_clearing_the_offside_decision_clears_the_map_too(screen):
@@ -176,4 +168,5 @@ def test_clearing_the_offside_decision_clears_the_map_too(screen):
 
     screen.clear_offside_decision()
 
-    assert screen.pitch_map._canvas._pixmap is None  # noqa: SLF001
+    assert screen.pitch_map._caption.text() == "No frame analysed yet."  # noqa: SLF001
+    assert screen.pitch_map._mark_button.isEnabled() is False  # noqa: SLF001

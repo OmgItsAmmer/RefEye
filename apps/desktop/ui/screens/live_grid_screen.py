@@ -14,11 +14,13 @@ camera has no configured file just stays "No signal".
 
 A grid-mode toggle (1/2/4 cameras) sits top-right, next to the stream badge.
 Each mode swaps in its own bottom bar:
-  * 4-up (default) — the full Cam1/Cam2/Best/Cam3/Cam4 transport bar.
-  * 2-up            — a reduced Cam1/Best/Cam2 bar.
-  * 1-up            — no transport bar at all (nothing to switch between);
+  * 1-up (default)  — no transport bar at all (nothing to switch between);
                        instead an Analyse button plus a dropdown that picks
-                       which camera's label the single tile wears.
+                       which camera's label the single tile wears. Cams 2-4
+                       are temporarily hidden behind this default — only
+                       reachable by switching grid mode, not disabled.
+  * 2-up            — a reduced Cam1/Best/Cam2 bar.
+  * 4-up            — the full Cam1/Cam2/Best/Cam3/Cam4 transport bar.
 """
 
 from __future__ import annotations
@@ -122,7 +124,7 @@ class LiveGridScreen(QWidget):
         top_bar.addStretch(1)
         top_bar.addWidget(self._build_overlay_toggle())
         top_bar.addSpacing(12)
-        top_bar.addLayout(self._build_grid_mode_toggle())
+        top_bar.addWidget(self._build_grid_mode_toggle())
         top_bar.addSpacing(12)
         self._stream_badge = StatusBadge("Connecting", BadgeVariant.MUTED)
         top_bar.addWidget(self._stream_badge)
@@ -141,9 +143,9 @@ class LiveGridScreen(QWidget):
         self._bottom_stack.addWidget(self._build_solo_bar())   # _MODE_SOLO
         root.addWidget(self._bottom_stack)
 
-        self._grid_mode = 4
+        self._grid_mode = 1
         self._mode_anim: QParallelAnimationGroup | None = None
-        self._relayout(4)
+        self._relayout(1)
 
     # -- detection overlay toggle --------------------------------------------
 
@@ -158,8 +160,13 @@ class LiveGridScreen(QWidget):
 
     # -- grid-mode toggle --------------------------------------------------
 
-    def _build_grid_mode_toggle(self) -> QHBoxLayout:
-        row = QHBoxLayout()
+    def _build_grid_mode_toggle(self) -> QWidget:
+        container = QWidget()
+        container.setObjectName("GridModeToggleContainer")
+        # Temporarily hidden per user request
+        container.setVisible(False)
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
 
         self._grid_mode_group = QButtonGroup(self)
@@ -180,8 +187,8 @@ class LiveGridScreen(QWidget):
             self._grid_mode_buttons[cells] = button
             row.addWidget(button)
 
-        self._grid_mode_buttons[4].setChecked(True)
-        return row
+        self._grid_mode_buttons[1].setChecked(True)
+        return container
 
     def _apply_grid_mode(self, cells: int) -> None:
         """Crossfade into the new grid/bar arrangement rather than snapping

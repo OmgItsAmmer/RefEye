@@ -21,10 +21,10 @@ the kind of thing this whole project exists to surface rather than hide.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from apps.desktop.ui.theme import tokens as t
-from apps.desktop.ui.widgets.common import data_value, meta, simple_dot
+from apps.desktop.ui.widgets.common import _PulsingDot, data_value, meta
 from offside.pipeline import StageReport, StageState
 
 #: Mirrors the stage order `OffsidePipeline.analyse()` actually runs in
@@ -32,14 +32,6 @@ from offside.pipeline import StageReport, StageState
 #: waiting for the first `stage_progress` signal to invent a row — is what
 #: lets the panel show "detection done, pose next" instead of only ever
 #: showing what has already finished.
-#:
-#: The third field is a short, at-a-glance label — not `StageReport.title`.
-#: Uppercased and letter-tracked (theme.md), the full title of the longest
-#: stage ("Second-last defender & offside line") sets a ~560px minimum width
-#: on the row it's in, which is wider than this panel's own column at any
-#: normal window size, not just a small one — this is what actually broke
-#: the layout, caught only once the column could no longer silently squeeze
-#: to fit. The full title survives as the row's tooltip.
 PIPELINE_STAGES: tuple[tuple[str, str, str, str], ...] = (
     ("detection", "M1", "Player & ball detection", "Detection"),
     ("body_keypoints", "M2.2", "Body keypoints (feet)", "Body keypoints"),
@@ -50,13 +42,6 @@ PIPELINE_STAGES: tuple[tuple[str, str, str, str], ...] = (
     ("decision_support", "M2.6", "Confidence & reasoning", "Confidence"),
 )
 
-#: Dot colour per stage state, plus the two states a row can be in before its
-#: `StageReport` has arrived at all. Deliberately *not* the strings "pending"
-#: or "running" — `StageState` is a `str` Enum, so `StageState.PENDING`
-#: hashes and compares equal to the plain string "pending", and the two
-#: sentinels below silently collided with `StageState.PENDING` as dict keys
-#: until this was renamed (a real bug caught by the tests: a stage the
-#: panel had never heard from read as "not built" instead of "waiting").
 _PENDING = "row_pending"
 _RUNNING = "row_running"
 
@@ -81,10 +66,7 @@ _STATE_WORD = {
 
 class StageChecklistRow(QWidget):
     """One pipeline stage: a dot, its short label, and one line of state.
-
-    `title` is the full `StageReport.title` and is never displayed — only
-    used to seed the tooltip before a report has arrived, so hovering an
-    untouched "waiting" row still says which stage it is.
+    Animates with a pulsing dot when active/running.
     """
 
     def __init__(self, short_label: str, title: str, parent: QWidget | None = None):
@@ -93,10 +75,10 @@ class StageChecklistRow(QWidget):
         self._title = title
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setContentsMargins(4, 3, 4, 3)
         layout.setSpacing(t.SPACING_UNIT)
 
-        self._dot = simple_dot(_DOT_COLOR[_PENDING])
+        self._dot = _PulsingDot(self)
         layout.addWidget(self._dot)
 
         self._label = meta(short_label.upper())
@@ -106,47 +88,57 @@ class StageChecklistRow(QWidget):
         self._detail = data_value(_STATE_WORD[_PENDING])
         layout.addWidget(self._detail)
         self.setToolTip(title)
+        self.set_pending()
 
     def set_pending(self) -> None:
-        self._dot.setStyleSheet(f"background-color: {_DOT_COLOR[_PENDING]}; border-radius: 4px;")
+        self._dot.set_color(_DOT_COLOR[_PENDING])
+        self._dot.set_pulsing(False)
         self._detail.setText(_STATE_WORD[_PENDING])
+        self.setProperty("running", "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.setToolTip(self._title)
 
     def set_running(self) -> None:
-        self._dot.setStyleSheet(f"background-color: {_DOT_COLOR[_RUNNING]}; border-radius: 4px;")
+        self._dot.set_color(_DOT_COLOR[_RUNNING])
+        self._dot.set_pulsing(True)
         self._detail.setText(_STATE_WORD[_RUNNING])
+        self.setProperty("running", "true")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def set_report(self, report: StageReport) -> None:
-        self._dot.setStyleSheet(
-            f"background-color: {_DOT_COLOR[report.state]}; border-radius: 4px;"
-        )
+        self._dot.set_color(_DOT_COLOR[report.state])
+        self._dot.set_pulsing(False)
         self._detail.setText(_STATE_WORD[report.state])
-        # The full title plus the summary is the one line worth surfacing
-        # without opening the inspector — everything else (details) stays
-        # out of a checklist meant to be read at a glance.
+        self.setProperty("running", "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.setToolTip(f"{self._title}\n{report.summary}")
 
 
 class OffsideProgressPanel(QWidget):
-    """The checklist itself: one `StageChecklistRow` per pipeline stage.
-
-    Hidden by default (`setVisible(False)`) — a checklist with every row
-    grey and pending, sitting under a review panel with nothing to review
-    yet, would look like a tool stuck at start-up rather than a tool that
-    simply hasn't been asked to do anything.
-    """
+    """The checklist itself: one `StageChecklistRow` per pipeline stage plus live progress bar."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("OffsideProgressPanel")
         self.setVisible(False)
+        self._completed_count = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
 
         self._caption = meta("")
         layout.addWidget(self._caption)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setObjectName("OffsideProgressBar")
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setFixedHeight(3)
+        self._progress_bar.setRange(0, len(PIPELINE_STAGES))
+        layout.addWidget(self._progress_bar)
 
         self._rows: dict[str, StageChecklistRow] = {}
         for key, _phase, title, short_label in PIPELINE_STAGES:
@@ -166,22 +158,22 @@ class OffsideProgressPanel(QWidget):
         """A run began on `frame_id`: reset every row and show the panel."""
         self.setVisible(True)
         self._error.setVisible(False)
+        self._completed_count = 0
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
         self._caption.setText(f"CHECKING FRAME {frame_id} FOR OFFSIDE")
         for row in self._rows.values():
             row.set_pending()
-        # The first stage starts immediately — mark it running rather than
-        # leaving every row identically grey the instant the panel appears.
         first_key = PIPELINE_STAGES[0][0]
         self._rows[first_key].set_running()
 
     def report_stage(self, report: StageReport) -> None:
         row = self._rows.get(report.key)
         if row is None:
-            # A stage this panel doesn't know about (future milestone) — do
-            # not crash the checklist over it, just skip the row it has no
-            # slot for.
             return
         row.set_report(report)
+        self._completed_count += 1
+        self._progress_bar.setValue(self._completed_count)
 
         index = next(
             (i for i, (key, *_rest) in enumerate(PIPELINE_STAGES) if key == report.key),
@@ -193,6 +185,7 @@ class OffsideProgressPanel(QWidget):
 
     def finish(self) -> None:
         self._caption.setText("OFFSIDE CHECK COMPLETE")
+        self._progress_bar.setValue(len(PIPELINE_STAGES))
 
     def fail(self, message: str) -> None:
         self._caption.setText("OFFSIDE CHECK FAILED")

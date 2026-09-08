@@ -105,7 +105,9 @@ def _confirm(win, frame_id: int, monkeypatch) -> None:
 def test_confirming_a_frame_triggers_the_offside_pipeline(window, monkeypatch):
     win, viewmodel = window
     calls = []
-    monkeypatch.setattr(viewmodel, "check_offside", lambda fid, img: calls.append(fid))
+    monkeypatch.setattr(
+        viewmodel, "check_offside", lambda fid, img, **kwargs: calls.append(fid)
+    )
 
     _confirm(win, 77, monkeypatch)
 

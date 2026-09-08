@@ -46,16 +46,12 @@ from apps.desktop.ui.widgets.loaders import CardSwapLoader
 from apps.desktop.ui.widgets.offside_progress import OffsideProgressPanel
 from apps.desktop.ui.widgets.offside_review import OffsideReviewPanel
 from apps.desktop.ui.widgets.pitch_map import PitchMapPanel
-from apps.desktop.ui.widgets.recent_clip_preview import RecentClipPreview
 from video.frame_access.video_service import VideoService
 from vision.features.feature_cache import FeatureCache
 
 PAGE_IDLE = 0
 PAGE_BUSY = 1
 PAGE_REVIEW = 2
-
-_TOP_RIGHT_PICKER = 0
-_TOP_RIGHT_PREVIEW = 1
 
 
 class AnalyzerScreen(QWidget):
@@ -66,9 +62,9 @@ class AnalyzerScreen(QWidget):
 
     def __init__(
         self,
-        video_service: VideoService,
-        recent_window_seconds: int,
-        analyze_shortcut_label: str,
+        video_service: VideoService | None = None,
+        recent_window_seconds: int = 20,
+        analyze_shortcut_label: str = "Space",
         feature_cache: FeatureCache | None = None,
         parent: QWidget | None = None,
     ):
@@ -81,41 +77,20 @@ class AnalyzerScreen(QWidget):
         root.setSpacing(16)
 
         root.addWidget(self._build_analysis_panel(analyze_shortcut_label), stretch=7)
-        root.addWidget(self._build_right_column(video_service, recent_window_seconds), stretch=3)
+        root.addWidget(self._build_right_column(), stretch=3)
 
     # -- left: analysis workspace --------------------------------------
 
-    def _build_right_column(
-        self, video_service: VideoService, recent_window_seconds: int
-    ) -> QScrollArea:
-        """The camera/preview slot, alternatives, and the offside panel,
-        inside a scroll area rather than three fixed-stretch panes.
-
-        Three growing panels stacked with fixed VBox stretch factors and no
-        escape hatch is what "small screen" actually breaks: on a window at
-        or near the app's own minimum size, three panels compressed to fit
-        whatever space is left is indistinguishable from labels silently
-        losing their text and buttons losing their padding. A `QScrollArea`
-        gives each panel its natural size and lets the *column* scroll
-        instead of squeezing its contents — the operator loses nothing, they
-        just occasionally scroll for it.
+    def _build_right_column(self) -> QScrollArea:
+        """The pitch calibration slot and the offside panel,
+        inside a scroll area rather than fixed-stretch panes.
         """
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        layout.addWidget(self._build_top_right_stack(video_service, recent_window_seconds))
-        layout.addWidget(self._build_alternatives_panel())
-        # M2.7: the offside call sits beneath the alternatives, so the verdict
-        # and its caveats are on screen at the same time as the frame it is
-        # about — an operator should never have to change view to find out
-        # what the tool was unsure about.
-        layout.addWidget(self._build_offside_panel())
-        # The flattened pitch, with whatever marks calibrated it — the same
-        # view the Pipeline Inspector shows, moved into the product so the
-        # operator does not need a separate debug tool to see what the
-        # calibration actually produced.
         layout.addWidget(self._build_pitch_panel())
+        layout.addWidget(self._build_offside_panel())
         layout.addStretch(1)
 
         scroll = QScrollArea()
@@ -123,9 +98,6 @@ class AnalyzerScreen(QWidget):
         scroll.setWidget(content)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        # AsNeeded, not AlwaysOff: if some future row still doesn't fit, a
-        # reachable scrollbar is a smaller failure than the content silently
-        # being clipped with no way to see the rest of it.
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         return scroll
@@ -187,46 +159,12 @@ class AnalyzerScreen(QWidget):
         panel.body().addWidget(self.request_label)
         return panel
 
-    # -- right: camera picker / recent clip + alternatives/actions --------
+    # -- right: pitch map, alternatives, offside --------------------------
 
-    def _build_top_right_stack(self, video_service: VideoService, window_seconds: int) -> QStackedWidget:
-        self._top_right_stack = QStackedWidget()
-        self._top_right_stack.addWidget(self._build_camera_picker_panel())  # _TOP_RIGHT_PICKER
-        self._top_right_stack.addWidget(
-            self._build_recent_clip_panel(video_service, window_seconds)
-        )  # _TOP_RIGHT_PREVIEW
-        return self._top_right_stack
-
-    def _build_camera_picker_panel(self) -> Panel:
-        panel = Panel("Pick a camera")
-
-        info = QLabel("No camera has been selected yet. Watch a camera to review its recent play.")
-        info.setWordWrap(True)
-        info.setProperty("role", "meta")
-        panel.body().addWidget(info)
-
-        panel.body().addStretch(1)
-        watch_button = AnimatedButton("Watch camera")
-        watch_button.setProperty("role", "primary")
-        watch_button.clicked.connect(self.camera_pick_requested.emit)
-        panel.body().addWidget(watch_button)
-        panel.body().addStretch(1)
-        return panel
-
-    def _build_recent_clip_panel(self, video_service: VideoService, window_seconds: int) -> Panel:
-        panel = Panel(f"Last {window_seconds}s")
-        self.recent_clip = RecentClipPreview(video_service, window_seconds)
-        # RecentClipPreview subclasses VideoSurface, which sets a 320x180
-        # minimum sized for the *main* video panel — inherited here even
-        # though this is a corner thumbnail. That inherited 320 (plus panel
-        # padding) was the real width the review rail could never shrink
-        # below, regardless of how narrow the window was: this call is what
-        # actually fixes the "hidden text on small screens" complaint, more
-        # than any scroll area does. 90px keeps a legible thumbnail without
-        # setting the column's floor.
-        self.recent_clip.setMinimumSize(90, 160)
-        self.recent_clip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        panel.body().addWidget(self.recent_clip, stretch=1)
+    def _build_pitch_panel(self) -> Panel:
+        panel = Panel("Pitch calibration")
+        self.pitch_map = PitchMapPanel()
+        panel.body().addWidget(self.pitch_map)
         return panel
 
     def _build_alternatives_panel(self) -> Panel:
@@ -248,12 +186,6 @@ class AnalyzerScreen(QWidget):
 
     def _on_offside_override(self, _verdict) -> None:
         self.review.set_offside(self._offside_decision, self.offside.explanation)
-
-    def _build_pitch_panel(self) -> Panel:
-        panel = Panel("Pitch map")
-        self.pitch_map = PitchMapPanel()
-        panel.body().addWidget(self.pitch_map)
-        return panel
 
     # -- offside decisions (M2.7) ----------------------------------------
 
@@ -298,11 +230,4 @@ class AnalyzerScreen(QWidget):
     # -- called when the screen becomes visible --------------------------
 
     def on_shown(self, camera_context: bool = False) -> None:
-        """`camera_context` is True only when navigation came from a Live
-        Grid camera/Best button — the one case where there's an actual
-        recent play to preview. A direct sidebar click gets the picker."""
-        if camera_context:
-            self._top_right_stack.setCurrentIndex(_TOP_RIGHT_PREVIEW)
-            self.recent_clip.refresh()
-        else:
-            self._top_right_stack.setCurrentIndex(_TOP_RIGHT_PICKER)
+        pass

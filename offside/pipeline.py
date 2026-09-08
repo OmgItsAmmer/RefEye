@@ -16,6 +16,7 @@ stage completing as it happens rather than waiting on the whole frame.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -24,6 +25,8 @@ import numpy as np
 
 from core.config.schema import AppSettings
 from core.domain.models import Detection, FramePacket
+from core.errors.exceptions import ModelLoadError
+from observability.logging.pipeline_run_log import PipelineRunLog
 from observability.logging.setup import get_logger
 from offside.ball_selection import select_ball
 from offside.body_keypoints.keypoints import PlayerPose
@@ -31,6 +34,7 @@ from offside.decision_support.explainer import DecisionExplainer
 from offside.decision_support.explanation import ConfidenceBand, DecisionExplanation
 from offside.field_geometry.pitch import PitchModel
 from offside.offside_line.line import OffsideDecision, OffsideLineCalculator, Verdict
+from offside.pitch_calibration.auto_landmarks import AutoLandmarkDetector
 from offside.pitch_calibration.calibrator import (
     CalibrationLevel,
     PitchCalibration,
@@ -75,7 +79,16 @@ class FrameAnalysis:
     frame: FramePacket
     detections: list[Detection] = field(default_factory=list)
     poses: list[PlayerPose] = field(default_factory=list)
+    #: How many poses had a confident torso (both shoulders, both hips) —
+    #: what M2.3's shirt-colour sampler actually needs, computed in
+    #: `_run_body_keypoints` where the threshold is already at hand. None
+    #: before that stage runs, distinct from 0 (measured, and found none).
+    torso_confident_count: int | None = None
     calibration: PitchCalibration | None = None
+    #: Correspondences the auto-landmark detector found on this frame, win or
+    #: lose — kept so the pitch map can draw them and the operator can see
+    #: what the model tried, not just whether it succeeded.
+    auto_landmark_points: list[PointCorrespondence] = field(default_factory=list)
     line_mask: np.ndarray | None = None
     teams: TeamAssignment | None = None
     identities: IdentityResult | None = None
@@ -155,12 +168,25 @@ class OffsidePipeline:
 
         self._follower = CalibrationFollower.from_config(calibration_config.follow)
 
+        self._auto_landmarks_config = calibration_config.auto_landmarks
+        self._auto_landmarks: AutoLandmarkDetector | None = None
+        if self._auto_landmarks_config.enabled:
+            self._auto_landmarks = AutoLandmarkDetector.from_config(
+                self._auto_landmarks_config,
+                self._auto_landmarks_config.checkpoint,
+                device=getattr(registry, "resolved_device", None) or "cpu",
+            )
+
         identity_config = settings.offside.player_identity
-        self._identity_tracker = IdentityTracker.from_config(identity_config)
+        self._identity_tracker = IdentityTracker.from_config(
+            identity_config,
+            device=getattr(registry, "resolved_device", None) or "cpu",
+        )
 
         team_config = settings.offside.team_assignment
         self._team_assigner = TeamAssigner.from_config(
             team_config,
+            pitch=self._pitch,
             # The grass window belongs to the pitch, not to team assignment;
             # sharing it keeps the kit sampler and the line detector agreeing
             # on what grass is instead of drifting apart in two config blocks.
@@ -195,9 +221,47 @@ class OffsidePipeline:
         # can afford the larger size.
         self._detector_imgsz = max(settings.ai.detector.imgsz, 1280)
 
+        self._run_log_config = settings.logging.pipeline_run_log
+
     @property
     def pitch(self) -> PitchModel:
         return self._pitch
+
+    def warm_up(self, frames: list[FramePacket]) -> None:
+        """Prime identity tracking and kit colours on the frames leading up to
+        a confirm, so the confirmed frame is not the first thing either has
+        ever seen.
+
+        M2.4 only reports `CONFIRMED` after several *consecutive* matched
+        frames (`min_frames_to_confirm`), and the app triggers the pipeline
+        once, on the single frame the operator confirms — so without this,
+        every track is judged after exactly one frame and can never be
+        anything but `TENTATIVE`, no matter how clean the kit colours are.
+        Measured on a real confirm: identity went from 16/16 tentative,
+        0 confirmed to real continuity once the preceding frames (already
+        held by the review strip, see `analysis/results/review_session.py`)
+        were run through this first.
+
+        Runs the same detection -> body_keypoints -> identity -> calibration
+        -> team_assignment stages `analyse()` uses, in the same order, so the
+        tracker, colour model and calibration follower end up in the state
+        they would be in had the pipeline been watching all along. Offside
+        geometry and the decision are skipped — a verdict on a frame that is
+        not the one being asked about is not useful and not free. Nothing is
+        logged to `PipelineRunLog`: this is priming, not a result.
+        """
+        for frame in frames:
+            analysis = FrameAnalysis(
+                frame_index=frame.frame_id,
+                frame=frame,
+                ball_min_size_ratio=self._settings.ai.detector.ball_min_size_ratio,
+                ball_max_size_ratio=self._settings.ai.detector.ball_max_size_ratio,
+            )
+            self._run_detection(analysis)
+            self._run_body_keypoints(analysis)
+            self._run_player_identity(analysis)
+            self._run_pitch_calibration(analysis)
+            self._run_team_assignment(analysis)
 
     def analyse(
         self,
@@ -221,12 +285,23 @@ class OffsidePipeline:
             ball_max_size_ratio=detector_config.ball_max_size_ratio,
         )
 
+        # One detailed JSON file for this run — see
+        # observability/logging/pipeline_run_log.py. Built here (not passed
+        # in) so every caller of `analyse()` gets one for free — the shipped
+        # app's confirm-triggered run and the Pipeline Inspector's frame
+        # stepping alike — the same "one implementation, not two" reasoning
+        # this module already exists for.
+        run_log = PipelineRunLog(self._run_log_config, frame_index)
+
         def run(stage: Callable[[FrameAnalysis], None]) -> None:
             before = len(analysis.reports)
+            started = time.perf_counter()
             stage(analysis)
-            if on_stage is not None:
-                for report in analysis.reports[before:]:
+            duration_ms = (time.perf_counter() - started) * 1000
+            for report in analysis.reports[before:]:
+                if on_stage is not None:
                     on_stage(report)
+                run_log.record_stage(report, duration_ms)
 
         run(self._run_detection)
         run(self._run_body_keypoints)
@@ -240,6 +315,8 @@ class OffsidePipeline:
         run(self._run_offside_line)
         run(self._run_decision_support)
         run(self._report_pending_stages)
+
+        run_log.write(analysis)
         return analysis
 
     # -- stages -------------------------------------------------------------
@@ -268,6 +345,23 @@ class OffsidePipeline:
                 detector._imgsz = previous
 
         ball = analysis.ball
+        ball_fallback_used = False
+        if ball is None and previous is not None and self._detector_imgsz != previous:
+            # The high-resolution pass above is what the verdict is built
+            # from, and it just missed the ball — often a real miss (motion
+            # blur, the ball tight against a keeper's hands in a save), not
+            # a bug. But the *live preview* the operator has been looking at
+            # runs its own separate, lower-resolution detector pass, and the
+            # two can disagree on exactly this kind of frame. Retrying once
+            # at that same lower resolution, ball-only, means a ball visibly
+            # on screen elsewhere in the app is not silently contradicted by
+            # the verdict without ever being looked for the same way.
+            fallback = self._detect_ball_fallback(detector, analysis.frame, previous)
+            if fallback:
+                analysis.detections = analysis.detections + fallback
+                ball = analysis.ball
+                ball_fallback_used = ball is not None
+
         analysis.reports.append(
             StageReport(
                 key="detection",
@@ -283,9 +377,54 @@ class OffsidePipeline:
                         f"uses {self._settings.ai.detector.imgsz}px)"
                     ),
                 ]
+                + (
+                    [
+                        (
+                            f"the ball was missed at {self._detector_imgsz}px but found by "
+                            f"a fallback pass at {self._settings.ai.detector.imgsz}px — the "
+                            "same resolution the live preview uses, so this agrees with "
+                            "what may already be visible on screen"
+                        )
+                    ]
+                    if ball_fallback_used
+                    else []
+                )
                 + ([] if ball else ["a missing ball is normal and not an error"]),
             )
         )
+
+    def _detect_ball_fallback(
+        self, detector, frame: FramePacket, fallback_imgsz: int
+    ) -> list[Detection]:
+        """One retry, ball-only, at the live preview's own resolution.
+
+        Player detections are never taken from this pass — the primary pass
+        above is the more accurate one for players, and re-running the whole
+        detector here is only to give the ball a second, cheaper chance at
+        the resolution the operator's own eyes have already been looking at.
+        Tagged with a distinct `source_model` so a run log — or, later, the
+        review overlay — can say plainly that this came from a fallback
+        pass rather than silently blending it in as if it were the primary
+        result.
+        """
+        previous = detector._imgsz
+        try:
+            detector._imgsz = fallback_imgsz
+            detections = detector.detect(frame)
+        finally:
+            detector._imgsz = previous
+
+        return [
+            Detection(
+                frame_id=detection.frame_id,
+                class_name=detection.class_name,
+                confidence=detection.confidence,
+                bbox_xyxy=detection.bbox_xyxy,
+                source_model=f"{detection.source_model}@{fallback_imgsz}px-fallback",
+            )
+            for detection in detections
+            if detection.class_name == BALL
+        ]
 
     def _run_body_keypoints(self, analysis: FrameAnalysis) -> None:
         estimator = self._registry.get_pose_estimator()
@@ -305,9 +444,26 @@ class OffsidePipeline:
         analysis.poses = estimator.estimate(analysis.frame, analysis.detections)
         measured = [p for p in analysis.poses if p.ground_point.is_measured]
         posed = [p for p in analysis.poses if p.has_pose]
+        # Feet and torso are different keypoint groups, found (or missed)
+        # independently by the same pose model — a crowded box or a
+        # side-on player can leave someone with a confident ankle and no
+        # usable shoulders at all. Reported here, not just discovered one
+        # stage later in M2.3's own count, because this is where it happens:
+        # a run log that only shows "22/22 feet measured" and then, three
+        # stages on, "0 players placed on a team" makes an operator go
+        # hunting for the gap in between. This line is that gap, named.
+        torso_threshold = self._settings.offside.team_assignment.torso_keypoint_confidence
+        torso_confident = [p for p in analysis.poses if p.has_confident_torso(torso_threshold)]
+        analysis.torso_confident_count = len(torso_confident)
 
         state = StageState.OK
         if analysis.poses and len(measured) < len(analysis.poses) * 0.5:
+            state = StageState.DEGRADED
+        elif analysis.poses and len(torso_confident) < len(analysis.poses) * 0.5:
+            # Feet are fine but M2.3 is about to be starved of shirt colour —
+            # this stage technically "succeeded" at its own job (locating
+            # feet), but degraded is the honest word for a result that is
+            # about to strand the next stage.
             state = StageState.DEGRADED
 
         analysis.reports.append(
@@ -323,6 +479,12 @@ class OffsidePipeline:
                     (
                         f"{len(posed)} skeletons found; the rest fall back to "
                         "the bottom of the player box"
+                    ),
+                    (
+                        f"{len(torso_confident)}/{len(analysis.poses)} players have a "
+                        "confident torso (both shoulders and both hips) — this is what "
+                        "M2.3's shirt-colour sampler needs, and a good foot position "
+                        "does not guarantee it"
                     ),
                     (
                         "green = measured from an ankle, orange = inferred "
@@ -363,11 +525,13 @@ class OffsidePipeline:
             exclude_box_margin=self._line_kwargs["exclude_box_margin"],
         )
 
+        auto_landmark_points: list = []
         if len(self.manual_correspondences) >= 4:
             # The operator has marked the pitch: that outranks any automatic
-            # guess, and is the only route to metric positions today. The marks
-            # used are the *followed* ones — where those points are now, not
-            # where they were on the frame the operator clicked.
+            # guess, a direct human confirmation nothing else in this stage
+            # can claim to be. The marks used are the *followed* ones — where
+            # those points are now, not where they were on the frame the
+            # operator clicked.
             calibration = self._calibrator.calibrate_manual(self.manual_correspondences)
             calibration.detected_lines = self._calibrator.calibrate_auto(
                 image,
@@ -375,13 +539,35 @@ class OffsidePipeline:
                 goal_line_family_index=self.goal_line_family_index,
             ).detected_lines
         else:
-            calibration = self._calibrator.calibrate_auto(
-                image,
-                exclude_boxes=boxes,
-                goal_line_family_index=self.goal_line_family_index,
-            )
+            auto_landmark_points = self._detect_auto_landmarks(image)
+            if len(auto_landmark_points) >= self._auto_landmarks_config.min_points:
+                # A model found enough of the same corner points an operator
+                # would have clicked — same solve, honestly labelled as not
+                # having come from a person (see calibrate_manual's `source`).
+                calibration = self._calibrator.calibrate_manual(
+                    auto_landmark_points, source="auto_landmarks"
+                )
+                calibration.detected_lines = self._calibrator.calibrate_auto(
+                    image,
+                    exclude_boxes=boxes,
+                    goal_line_family_index=self.goal_line_family_index,
+                ).detected_lines
+            else:
+                calibration = self._calibrator.calibrate_auto(
+                    image,
+                    exclude_boxes=boxes,
+                    goal_line_family_index=self.goal_line_family_index,
+                )
+                if self._auto_landmarks is not None:
+                    calibration.reasons.append(
+                        f"automatic landmark detection found "
+                        f"{len(auto_landmark_points)} confident point(s) — "
+                        f"{self._auto_landmarks_config.min_points} needed for "
+                        "metric calibration without marking by hand"
+                    )
 
         analysis.calibration = calibration
+        analysis.auto_landmark_points = auto_landmark_points
 
         state = {
             CalibrationLevel.METRIC: StageState.OK,
@@ -410,6 +596,11 @@ class OffsidePipeline:
             (
                 f"{len(self.manual_correspondences)} landmark(s) marked by hand "
                 "(4 needed for metric)"
+            ),
+            (
+                f"{len(auto_landmark_points)} landmark(s) found automatically "
+                f"({self._auto_landmarks_config.min_points} needed for metric "
+                "without marking by hand)"
             ),
         ]
         details += calibration.reasons
@@ -578,6 +769,28 @@ class OffsidePipeline:
                 details=details,
             )
         )
+
+    def _detect_auto_landmarks(self, image) -> list[PointCorrespondence]:
+        """Whatever the keypoint model found on this frame, or an empty list.
+
+        A missing/corrupt checkpoint must never take down the whole offside
+        path — the same "degrade, don't crash" rule the pose and detection
+        models already follow — so this stays best-effort and the pipeline
+        falls back to directional calibration exactly as it did before this
+        detector existed.
+        """
+        if self._auto_landmarks is None:
+            return []
+        try:
+            return self._auto_landmarks.detect(image, self._pitch)
+        except ModelLoadError as exc:
+            logger.warning(
+                "auto_landmarks_unavailable",
+                component="pitch_calibration",
+                reason=str(exc),
+            )
+            self._auto_landmarks = None  # stop retrying a load that will keep failing
+            return []
 
     def _follow_marks(self, analysis: FrameAnalysis, image, boxes, cut: bool):
         """Move the operator's marks with the camera, or drop them at a cut.

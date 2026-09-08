@@ -17,6 +17,7 @@ models/**/*.engine
 # Logs & local data
 logs/*.log
 logs/*.jsonl
+logs/CLI/*.json
 storage/cache/*
 !storage/cache/.gitkeep
 exports/*.jpg

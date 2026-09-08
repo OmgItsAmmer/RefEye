@@ -83,8 +83,20 @@ class OffsideRunner(QObject):
             self._pipeline = OffsidePipeline(self._settings, self._registry)
         return self._pipeline
 
-    def analyse(self, frame_id: int, image: np.ndarray) -> None:
+    def analyse(
+        self,
+        frame_id: int,
+        image: np.ndarray,
+        warm_up_frames: list[tuple[int, np.ndarray]] | None = None,
+    ) -> None:
         """Analyse `image` (the confirmed frame) in the background.
+
+        `warm_up_frames` are the frames leading up to it — the review strip
+        already holds them (`analysis/results/review_session.py`) — run
+        through `OffsidePipeline.warm_up()` first so identity tracking and
+        kit colours have real continuity by the time the confirmed frame is
+        judged, rather than starting from nothing on every single confirm
+        (see `OffsidePipeline.warm_up` for why that matters).
 
         A run already in flight is not cancelled — the pipeline is not
         interruptible mid-stage, and an operator who confirms twice quickly
@@ -98,19 +110,28 @@ class OffsideRunner(QObject):
 
         self._worker = threading.Thread(
             target=self._run,
-            args=(frame_id, image),
+            args=(frame_id, image, warm_up_frames or []),
             name="offside-analysis",
             daemon=True,
         )
         self._worker.start()
 
-    def _run(self, frame_id: int, image: np.ndarray) -> None:
+    def _run(
+        self,
+        frame_id: int,
+        image: np.ndarray,
+        warm_up_frames: list[tuple[int, np.ndarray]],
+    ) -> None:
         try:
             frame = self._frame_packet(frame_id, image)
             with self._lock:
                 # The pipeline is not thread-safe against itself (team colour
                 # and identity state are mutated in place); serialising here
                 # is cheap because confirms are rare compared to live frames.
+                if warm_up_frames:
+                    self.pipeline.warm_up(
+                        [self._frame_packet(fid, img) for fid, img in warm_up_frames]
+                    )
                 analysis = self.pipeline.analyse(
                     frame, frame_id, on_stage=self._forward_stage
                 )

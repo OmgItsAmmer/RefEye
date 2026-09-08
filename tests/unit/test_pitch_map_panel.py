@@ -23,7 +23,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from apps.desktop.ui.widgets.pitch_map import PitchMapPanel  # noqa: E402
 from offside.field_geometry.pitch import PitchModel  # noqa: E402
 from tests.unit.test_pipeline_presenter import FakeAnalysis, make_pose  # noqa: E402
-from tests.unit.test_team_assignment import FakeDirectionalCalibration  # noqa: E402
+from tests.unit.test_team_assignment import (  # noqa: E402
+    FakeDirectionalCalibration,
+    FakeMetricCalibration,
+)
 
 _RIGHT_COLUMN_BUDGET_PX = 300  # matches tests/integration/test_offside_review_screen.py
 
@@ -45,7 +48,8 @@ def pitch() -> PitchModel:
 
 def test_starts_with_an_honest_empty_state(panel):
     assert panel._caption.text() == "No frame analysed yet."  # noqa: SLF001
-    assert panel._canvas._pixmap is None  # noqa: SLF001
+    assert panel._canvas._pixmap is not None  # noqa: SLF001
+    assert panel._mark_button.isEnabled() is False  # noqa: SLF001
 
 
 def test_does_not_set_the_review_rails_floor(panel):
@@ -61,7 +65,7 @@ def test_an_uncalibrated_frame_says_so(panel, pitch):
 
     panel.set_analysis(analysis, pitch)
 
-    assert panel._caption.text() == "Not calibrated on this frame."  # noqa: SLF001
+    assert panel._caption.text().startswith("Not calibrated on this frame")  # noqa: SLF001
     assert panel._canvas._pixmap is not None  # noqa: SLF001
 
 
@@ -120,8 +124,8 @@ def test_clearing_removes_the_map_not_just_the_caption(panel, pitch):
 
     panel.clear()
 
-    assert panel._canvas._pixmap is None  # noqa: SLF001
     assert panel._caption.text() == "No frame analysed yet."  # noqa: SLF001
+    assert panel._mark_button.isEnabled() is False  # noqa: SLF001
 
 
 def test_the_canvas_fits_whatever_width_it_is_given(panel, pitch):
@@ -135,3 +139,66 @@ def test_the_canvas_fits_whatever_width_it_is_given(panel, pitch):
     canvas_widget = panel._canvas  # noqa: SLF001
     canvas_widget.resize(180, 120)
     assert canvas_widget.minimumSizeHint().width() <= _RIGHT_COLUMN_BUDGET_PX
+
+
+# -- the "Mark landmarks" action (M2.7, manual fallback) ---------------------
+
+
+def test_the_mark_button_is_disabled_until_a_frame_has_been_analysed(panel):
+    assert not panel._mark_button.isEnabled()  # noqa: SLF001
+
+
+def test_the_mark_button_enables_once_a_frame_is_shown(panel, pitch):
+    analysis = FakeAnalysis(poses=[])
+    analysis.calibration = FakeDirectionalCalibration()
+    analysis.teams = None
+    panel.set_analysis(analysis, pitch)
+    assert panel._mark_button.isEnabled()  # noqa: SLF001
+
+
+def test_clearing_disables_the_mark_button_again(panel, pitch):
+    analysis = FakeAnalysis(poses=[])
+    analysis.calibration = FakeDirectionalCalibration()
+    analysis.teams = None
+    panel.set_analysis(analysis, pitch)
+
+    panel.clear()
+
+    assert not panel._mark_button.isEnabled()  # noqa: SLF001
+
+
+def test_clicking_mark_emits_a_request_the_screen_can_act_on(panel, pitch):
+    """The panel has no access to the confirmed frame's raw image or the
+    pipeline — it can only ask; `MainWindow` does the actual opening."""
+    analysis = FakeAnalysis(poses=[])
+    analysis.calibration = FakeDirectionalCalibration()
+    analysis.teams = None
+    panel.set_analysis(analysis, pitch)
+
+    seen = []
+    panel.mark_requested.connect(lambda: seen.append(True))
+    panel._mark_button.click()  # noqa: SLF001
+
+    assert seen == [True]
+
+
+def test_needs_manual_marking_is_true_below_metric(panel, pitch):
+    analysis = FakeAnalysis(poses=[])
+    analysis.calibration = FakeDirectionalCalibration()
+    analysis.teams = None
+    panel.set_analysis(analysis, pitch)
+    assert panel.needs_manual_marking is True
+
+
+def test_needs_manual_marking_is_false_once_metric(panel, pitch):
+    analysis = FakeAnalysis(poses=[make_pose()])
+    analysis.calibration = FakeMetricCalibration()
+    analysis.teams = None
+    panel.set_analysis(analysis, pitch)
+    assert panel.needs_manual_marking is False
+
+
+def test_needs_manual_marking_is_false_before_anything_has_run(panel):
+    """Not yet knowing is not the same as knowing it's bad — an empty panel
+    must not read as "please mark this" before any frame exists to mark."""
+    assert panel.needs_manual_marking is False

@@ -206,8 +206,21 @@ def test_runs_on_the_real_clip_with_real_models(settings):
     assert analysis.line_mask is not None
     by_phase = {report.phase: report for report in analysis.reports}
     assert by_phase["M2.2"].state in (StageState.OK, StageState.DEGRADED)
-    # Never metric without an operator marking the pitch.
-    assert not analysis.calibration.is_metric
+    # Metric calibration no longer requires an operator to mark the pitch —
+    # the auto-landmark detector (offside/pitch_calibration/auto_landmarks.py)
+    # can reach it by itself on a frame with enough visible pitch markings.
+    # It must still say honestly that it did, not claim to be the operator.
+    if analysis.calibration.is_metric:
+        assert analysis.calibration.source == "auto_landmarks"
+
+    # The torso-yield count (added after a real frame showed 19/19 feet
+    # measured but M2.3 found usable shirt colour on only 4 of them — the
+    # gap this line exists to surface one stage earlier).
+    assert analysis.torso_confident_count is not None
+    assert 0 <= analysis.torso_confident_count <= len(analysis.poses)
+    assert any(
+        "confident torso" in detail for detail in by_phase["M2.2"].details
+    )
 
 
 @pytest.mark.skipif(not CLIP.exists(), reason="client reference clip is not in git")

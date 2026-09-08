@@ -113,3 +113,30 @@ def test_navigation_freezes_on_the_event_frame():
     session.next_candidate()
     frame_id, _ = session.current_frame()
     assert frame_id == 200
+
+
+# -- frames_before: the offside pipeline's identity warm-up window ----------
+
+
+def test_frames_before_returns_only_earlier_frames_in_order():
+    strip = ReviewStrip(
+        {100: _ENCODED_FRAME, 105: _ENCODED_FRAME, 110: _ENCODED_FRAME, 115: _ENCODED_FRAME},
+        center_frame_id=110,
+    )
+
+    frames = strip.frames_before(110)
+
+    assert [frame_id for frame_id, _ in frames] == [100, 105]
+    assert all(isinstance(image, np.ndarray) for _, image in frames)
+
+
+def test_frames_before_the_earliest_frame_is_empty():
+    strip = ReviewStrip({100: _ENCODED_FRAME, 105: _ENCODED_FRAME}, center_frame_id=100)
+
+    assert strip.frames_before(100) == []
+
+
+def test_frames_before_an_empty_strip_is_empty():
+    strip = ReviewStrip({}, center_frame_id=100)
+
+    assert strip.frames_before(100) == []
